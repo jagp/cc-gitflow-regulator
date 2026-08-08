@@ -21,6 +21,18 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-branch.sh" plan $ARGUMENTS
 Show the user the plan output verbatim. If it errors (exit 2), stop and report
 — do not work around it.
 
+Plan lines worth knowing (relay them verbatim like the rest):
+
+- `plan: adopt` — no local branch exists but origin/&lt;branch&gt; does; finish
+  will create the local branch from it first (local-first reconciliation)
+- `plan: worktree ... DETACHED — matched by managed-worktree name` — the
+  branch is not checked out anywhere, but a managed worktree matching it by
+  name was found (normal after SessionEnd or for background sessions)
+- `plan: remote` — whether origin/&lt;branch&gt; exists; finish only ever runs
+  `git fetch --prune` and reports — it NEVER deletes remote branches
+- `plan: session AMBIGUOUS` — multiple jobs match; finish will refuse
+  --kill-session rather than guess
+
 ## 2. Consent for destructive flags
 
 Two flags are destructive and default OFF:
@@ -64,5 +76,12 @@ Relay the script's summary lines. Exit codes:
   run `/finish-branch <branch>` again, and the resumed run detects the branch
   is contained in the base and performs the remaining cleanup only. Relay the
   PR URL and say exactly that
-- `4` — merged, but cleanup incomplete (e.g. branch not deletable); report the
-  warnings verbatim
+- `4` — merged, but cleanup incomplete; report the warnings verbatim. Causes
+  include: branch not deletable, an ambiguous session match (refused to kill),
+  a detached worktree holding commits not yet in the base (refused to remove —
+  they would be lost), or a folder some process still holds (on Windows, any
+  process whose cwd is inside a folder locks it against deletion — EBUSY)
+
+After any finish, if the output includes a `note:` that origin/&lt;branch&gt;
+still exists on the remote, relay it: deleting remote branches is always the
+user's call (multiplayer-safe), never the script's.

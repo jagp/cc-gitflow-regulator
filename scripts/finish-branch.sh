@@ -3,7 +3,8 @@
 #
 # Modes (wired to the /finish-branch command in commands/finish-branch.md):
 #   plan   <branch>   read-only: resolve branch/base/worktree/session and print
-#                     exactly what `finish` would do; makes NO changes
+#                     exactly what `finish` would do; makes NO changes (no refs
+#                     created, no fetch)
 #   finish <branch> [--kill-session] [--delete-branch]
 #                     merge <branch> into the gitflow base with --no-ff.
 #                     On conflict: abort, push the branch and open a PR instead
@@ -13,17 +14,34 @@
 #                                        branch's worktree and delete its job dir
 #                       --delete-branch  remove the worktree and delete the branch
 #
-# Unlike the hook script (claude-gitflow.sh), this is user-invoked and MUST
-# fail loudly. Exit codes:
+# Branch resolution is local-first: if no local branch matches but an
+# origin/<candidate> does (background sessions publish to origin without ever
+# creating a local branch), `plan` announces it and `finish` creates the local
+# branch from the remote-tracking ref before proceeding.
+#
+# Worktree resolution knows about DETACHED worktrees: both the regulator's
+# SessionEnd hook and harness background sessions leave managed worktrees on a
+# detached HEAD (releasing the branch locally IS the delivery), so the branch
+# is never checked out there. Those are recovered via the plugin's own naming
+# contract (rename hook): .claude/worktrees/<name> <-> <prefix><name>.
+#
+# The remote branch is NEVER deleted: finish runs `git fetch --prune` to drop
+# stale remote-tracking refs and reports whether origin/<branch> still exists.
+#
+# Unlike the hook script (cc-gitflow-regulator.sh), this is user-invoked and
+# MUST fail loudly. Exit codes:
 #   0 ok   2 refused/preflight failed   3 merge conflict (PR route taken)
 #   4 cleanup incomplete
 #
-# Configuration: CLAUDE_GITFLOW_PREFIX, CLAUDE_GITFLOW_BASE (same as hooks).
+# Configuration: CLAUDE_GITFLOW_PREFIX, CLAUDE_GITFLOW_BASE (same as hooks),
+# CLAUDE_GITFLOW_JOBS_DIR (job-state location; default ~/.claude/jobs — meant
+# for tests).
 set -u
 
 mode="${1:-}"; shift 2>/dev/null || true
 PREFIX="${CLAUDE_GITFLOW_PREFIX:-feature/}"
 BASE_OVERRIDE="${CLAUDE_GITFLOW_BASE:-}"
+JOBS_DIR="${CLAUDE_GITFLOW_JOBS_DIR:-$HOME/.claude/jobs}"
 
 branch_arg=""; kill_session=0; delete_branch=0
 for a in "$@"; do
@@ -49,15 +67,34 @@ root="${common%/.git}"
 G() { git -C "$root" "$@"; }
 
 # --- resolve target branch ---------------------------------------------------
+print_candidates() {
+  local list; list="$(G for-each-ref --format='%(refname:short)' \
+    "refs/heads/${PREFIX}" refs/heads/feature refs/heads/bugfix refs/heads/hotfix | sort -u)"
+  if [ -n "$list" ]; then
+    echo "candidates:" >&2; printf '%s\n' "$list" >&2
+  else
+    echo "candidates: (none — no local feature/bugfix/hotfix branches)" >&2
+    local rlist; rlist="$(G for-each-ref --format='%(refname:short)' \
+      "refs/remotes/origin/${PREFIX}" refs/remotes/origin/feature \
+      refs/remotes/origin/bugfix refs/remotes/origin/hotfix 2>/dev/null | sort -u)"
+    if [ -n "$rlist" ]; then
+      echo "candidates: origin-only work branches (name one and finish will adopt it locally):" >&2
+      printf '%s\n' "$rlist" | sed 's/^/candidates:   /' >&2
+    fi
+  fi
+}
 resolve_branch() {
   local b="$1"
   if [ -n "$b" ]; then
     for c in "$b" "${PREFIX}${b}" "feature/$b" "bugfix/$b" "hotfix/$b"; do
       if G show-ref --verify -q "refs/heads/$c"; then printf '%s' "$c"; return 0; fi
     done
-    echo "candidates:" >&2
-    G for-each-ref --format='%(refname:short)' \
-      "refs/heads/${PREFIX}" refs/heads/feature refs/heads/bugfix refs/heads/hotfix | sort -u >&2
+    # Local-first fallback: the branch may exist only as a remote-tracking ref
+    # (a background session pushed it; no local branch was ever created).
+    for c in "$b" "${PREFIX}${b}" "feature/$b" "bugfix/$b" "hotfix/$b"; do
+      if G show-ref --verify -q "refs/remotes/origin/$c"; then printf 'remote:%s' "$c"; return 0; fi
+    done
+    print_candidates
     return 1
   fi
   # no argument: current branch if it looks like a gitflow work branch
@@ -69,12 +106,17 @@ resolve_branch() {
   local list; list="$(G for-each-ref --format='%(refname:short)' \
     "refs/heads/${PREFIX}" refs/heads/feature refs/heads/bugfix refs/heads/hotfix | sort -u)"
   if [ "$(printf '%s\n' "$list" | grep -c .)" = "1" ]; then printf '%s' "$list"; return 0; fi
-  echo "candidates:" >&2; printf '%s\n' "$list" >&2
+  print_candidates
   return 1
 }
 
-branch="$(resolve_branch "$branch_arg")" \
+resolved="$(resolve_branch "$branch_arg")" \
   || fail "cannot resolve a single work branch — pass one explicitly (see candidates above)"
+branch_is_remote_only=0
+case "$resolved" in
+  remote:*) branch="${resolved#remote:}"; branch_is_remote_only=1 ;;
+  *) branch="$resolved" ;;
+esac
 
 # --- resolve base branch -----------------------------------------------------
 base=""
@@ -90,7 +132,22 @@ fi
 [ -n "$base" ] || fail "no local base branch (develop/dev) — set CLAUDE_GITFLOW_BASE"
 [ "$branch" = "$base" ] && fail "refusing: $branch is the base branch"
 
-ahead="$(G rev-list --count "$base..$branch" 2>/dev/null || echo 0)"
+# --- adopt an origin-only branch (finish) / pick the computation ref ---------
+# plan stays read-only: it computes against the remote-tracking ref and only
+# announces the adoption; finish actually creates the local branch.
+merge_ref="$branch"
+if [ "$branch_is_remote_only" = "1" ]; then
+  if [ "$mode" = "finish" ]; then
+    G branch "$branch" "refs/remotes/origin/$branch" 2>/dev/null \
+      || fail "could not create local branch $branch from origin/$branch"
+    echo "ok: created local branch $branch from origin/$branch (no local branch existed)"
+    branch_is_remote_only=0
+  else
+    merge_ref="refs/remotes/origin/$branch"
+  fi
+fi
+
+ahead="$(G rev-list --count "$base..$merge_ref" 2>/dev/null || echo 0)"
 
 # --- locate the worktree holding the branch ---------------------------------
 wt_dir=""; wt_locked=0
@@ -105,7 +162,35 @@ $(G worktree list --porcelain)
 EOF
 [ "$wt_dir" = "$root" ] && wt_dir=""   # branch checked out in the main clone is not a lock
 
-norm() { printf '%s' "$1" | tr 'A-Z\\' 'a-z/'; }
+# norm: case/separator-insensitive path compare; -s squeezes the '//' left
+# behind when a JSON-escaped '\\' path was read without jq.
+norm() { printf '%s' "$1" | tr 'A-Z\\' 'a-z/' | tr -s '/'; }
+
+# Fallback: managed worktrees on a DETACHED HEAD never match the scan above
+# (the branch is not checked out anywhere — see header). Recover them by the
+# rename hook's naming contract: .claude/worktrees/<name> <-> <prefix><name>.
+# Only detached worktrees qualify; one holding a DIFFERENT branch is other work.
+wt_attached=1
+if [ -z "$wt_dir" ]; then
+  short="$(norm "${branch##*/}")"
+  cur=""
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*) cur="${line#worktree }" ;;
+      detached)
+        bn="$(basename "$(norm "$cur")")"; bn="${bn#worktree-}"
+        if [ "$bn" = "$short" ]; then
+          case "$(norm "$cur")" in
+            "$(norm "$root")"/.claude/worktrees/*) wt_dir="$cur"; wt_attached=0 ;;
+          esac
+        fi ;;
+      "locked"*) [ -n "$wt_dir" ] && [ "${cur:-}" = "$wt_dir" ] && wt_locked=1 ;;
+    esac
+  done <<EOF
+$(G worktree list --porcelain)
+EOF
+fi
+
 wt_is_managed=0
 case "$(norm "$wt_dir")" in */.claude/worktrees/*) wt_is_managed=1 ;; esac
 here="$(pwd -W 2>/dev/null || pwd)"   # -W: Git Bash prints the Windows-style path
@@ -122,19 +207,37 @@ job_field() { # file key -> value
     sed -n 's/.*"'"$2"'": *"\([^"]*\)".*/\1/p' "$1" | head -1
   fi
 }
-job_dir=""; job_session=""
-if [ -n "$wt_dir" ]; then
-  for st in "$HOME"/.claude/jobs/*/state.json; do
-    [ -f "$st" ] || continue
-    jwt="$(job_field "$st" worktreePath)"
-    [ -n "$jwt" ] || continue
-    if [ "$(norm "$jwt")" = "$(norm "$wt_dir")" ]; then
+# Match by exact worktree path, or — when no worktree was resolved (already
+# pruned, but the session may live on) — by the naming contract, scoped to
+# THIS repo's managed dir so a same-named worktree of another project can
+# never match. More than one match is ambiguous: report and refuse to kill
+# rather than pick one.
+job_dir=""; job_session=""; job_matches=0; job_ids=""
+short="$(norm "${branch##*/}")"
+for st in "$JOBS_DIR"/*/state.json; do
+  [ -f "$st" ] || continue
+  jwt="$(job_field "$st" worktreePath)"
+  [ -n "$jwt" ] || continue
+  njwt="$(norm "$jwt")"
+  match=0
+  if [ -n "$wt_dir" ] && [ "$njwt" = "$(norm "$wt_dir")" ]; then
+    match=1
+  elif [ -z "$wt_dir" ]; then
+    case "$njwt" in
+      "$(norm "$root")"/.claude/worktrees/*)
+        jbn="$(basename "$njwt")"; jbn="${jbn#worktree-}"
+        [ "$jbn" = "$short" ] && match=1 ;;
+    esac
+  fi
+  if [ "$match" = "1" ]; then
+    job_matches=$((job_matches + 1))
+    job_ids="$job_ids $(basename "$(dirname "$st")")"
+    if [ -z "$job_dir" ]; then
       job_dir="$(dirname "$st")"
       job_session="$(job_field "$st" sessionId)"
-      break
     fi
-  done
-fi
+  fi
+done
 job_is_self=0
 if [ -n "$job_dir" ] && [ -n "${CLAUDE_JOB_DIR:-}" ]; then
   [ "$(basename "$job_dir")" = "$(basename "$CLAUDE_JOB_DIR")" ] && job_is_self=1
@@ -143,12 +246,15 @@ fi
 # ============================== plan =========================================
 if [ "$mode" = "plan" ]; then
   echo "plan: branch        $branch ($ahead commit(s) ahead of $base)"
+  [ "$branch_is_remote_only" = "1" ] \
+    && echo "plan: adopt         no local branch — finish will create $branch from origin/$branch first"
   echo "plan: base          $base"
   if [ -n "$wt_dir" ]; then
     st="clean"; [ -n "$(git -C "$wt_dir" status --porcelain 2>/dev/null)" ] && st="DIRTY"
     lk=""; [ "$wt_locked" = "1" ] && lk=", git-locked"
+    att=""; [ "$wt_attached" = "0" ] && att=", DETACHED — matched by managed-worktree name"
     slf=""; [ "$wt_is_self" = "1" ] && slf=" (this session's own worktree)"
-    echo "plan: worktree      $wt_dir ($st$lk)$slf"
+    echo "plan: worktree      $wt_dir ($st$lk$att)$slf"
     if [ "$st" = "DIRTY" ]; then
       if [ "$ahead" = "0" ]; then
         echo "plan: NOTE          uncommitted worktree changes are NOT in $base — --delete-branch will DISCARD them"
@@ -159,22 +265,33 @@ if [ "$mode" = "plan" ]; then
   else
     echo "plan: worktree      none — branch is not checked out anywhere"
   fi
-  if [ -n "$job_dir" ]; then
+  if [ "$job_matches" -gt 1 ]; then
+    echo "plan: session       AMBIGUOUS — jobs matching this worktree:$job_ids — finish will refuse --kill-session"
+  elif [ -n "$job_dir" ]; then
     slf=""; [ "$job_is_self" = "1" ] && slf=" (this session — will refuse to kill)"
     echo "plan: session       job $(basename "$job_dir"), session $job_session$slf"
+  elif [ -n "$wt_dir" ]; then
+    echo "plan: session       none found — if worktree removal fails (EBUSY), some process still holds the folder"
   else
     echo "plan: session       none found for this worktree"
   fi
   if [ "$ahead" = "0" ]; then
     echo "plan: merge         nothing to merge (already in $base) — finish = cleanup only"
-  elif G merge-tree --write-tree "$base" "$branch" >/dev/null 2>&1; then
+  elif G merge-tree --write-tree "$base" "$merge_ref" >/dev/null 2>&1; then
     echo "plan: merge         clean --no-ff merge into $base expected"
-  elif G merge-tree --write-tree "$base" "$branch" 2>/dev/null | grep -q .; then
+  elif G merge-tree --write-tree "$base" "$merge_ref" 2>/dev/null | grep -q .; then
     echo "plan: merge         CONFLICTS expected — finish will push + open a PR instead"
   else
     echo "plan: merge         conflict prediction unavailable (git < 2.38) — finish will try and abort safely"
   fi
-  echo "plan: kill-session  $( [ -n "$job_dir" ] && echo "kill session process + delete $(basename "$job_dir")" || echo "nothing to do" ) [requires --kill-session]"
+  if G remote get-url origin >/dev/null 2>&1; then
+    if G show-ref --verify -q "refs/remotes/origin/$branch"; then
+      echo "plan: remote        origin/$branch exists — finish will fetch --prune and report it; remote branches are NEVER auto-deleted"
+    else
+      echo "plan: remote        no origin/$branch known locally — finish will fetch --prune to sync"
+    fi
+  fi
+  echo "plan: kill-session  $( [ "$job_matches" -gt 1 ] && echo "refuse (ambiguous match)" || { [ -n "$job_dir" ] && echo "kill session process + delete $(basename "$job_dir")" || echo "nothing to do"; } ) [requires --kill-session]"
   echo "plan: delete-branch remove worktree (if any) + git branch -d $branch [requires --delete-branch]"
   exit 0
 fi
@@ -207,8 +324,12 @@ fi
 # Phase 2: release the lock — detach the worktree so the branch is free.
 if [ -n "$wt_dir" ]; then
   [ "$wt_locked" = "1" ] && G worktree unlock "$wt_dir" 2>/dev/null
-  git -C "$wt_dir" switch --detach -q || fail "could not detach worktree $wt_dir"
-  echo "ok: released $branch from $wt_dir"
+  if [ "$wt_attached" = "1" ]; then
+    git -C "$wt_dir" switch --detach -q || fail "could not detach worktree $wt_dir"
+    echo "ok: released $branch from $wt_dir"
+  else
+    echo "ok: $branch is not checked out in $wt_dir (already detached) — no branch lock to release"
+  fi
 fi
 
 # Phase 3: merge into base (or PR route on conflict).
@@ -245,8 +366,13 @@ else
   exit 3
 fi
 
+incomplete=0
+
 # Phase 4: kill the attached session (opt-in via --kill-session).
-if [ "$kill_session" = "1" ] && [ -n "$job_dir" ]; then
+if [ "$kill_session" = "1" ] && [ "$job_matches" -gt 1 ]; then
+  echo "warn: multiple jobs match this worktree:$job_ids — ambiguous, refusing to kill; inspect $JOBS_DIR and clean up manually" >&2
+  incomplete=1
+elif [ "$kill_session" = "1" ] && [ -n "$job_dir" ]; then
   if [ "$job_is_self" = "1" ]; then
     echo "warn: refusing to kill this session's own job ($(basename "$job_dir")) — end the session normally"
   else
@@ -261,23 +387,49 @@ if [ "$kill_session" = "1" ] && [ -n "$job_dir" ]; then
           [ "$p" != "$$" ] && kill "$p" 2>/dev/null
         done
       fi
+      sleep 1   # let the OS release the dead processes' cwd handles (Windows EBUSY)
     fi
     rm -rf "$job_dir" && echo "ok: session killed and job $(basename "$job_dir") deleted"
   fi
 elif [ "$kill_session" = "1" ]; then
-  echo "ok: no session/job found for $branch — nothing to kill"
+  if [ -n "$wt_dir" ]; then
+    echo "warn: no session/job matched $wt_dir — nothing killed; if worktree removal fails below, some process still holds the folder (any process whose cwd is inside locks it on Windows)" >&2
+  else
+    echo "ok: no session/job found for $branch — nothing to kill"
+  fi
 fi
 
 # Phase 5: delete worktree + branch (opt-in via --delete-branch).
-incomplete=0
 if [ "$delete_branch" = "1" ]; then
   if [ -n "$wt_dir" ]; then
+    keep_wt=0
     if [ "$wt_is_self" = "1" ]; then
       echo "warn: not removing $wt_dir — this session is running inside it"
-      incomplete=1
-    else
-      G worktree remove "$wt_dir" 2>/dev/null || G worktree remove --force "$wt_dir" 2>/dev/null \
-        || { echo "warn: could not remove worktree $wt_dir" >&2; incomplete=1; }
+      incomplete=1; keep_wt=1
+    elif [ "$wt_attached" = "0" ]; then
+      # A detached worktree may hold committed work that no branch name
+      # protects — `git branch -d` below guards the BRANCH, nothing guards a
+      # detached tip. Refuse rather than lose commits.
+      wt_head="$(git -C "$wt_dir" rev-parse HEAD 2>/dev/null || true)"
+      if [ -n "$wt_head" ] \
+         && ! G merge-base --is-ancestor "$wt_head" "$base" 2>/dev/null \
+         && ! G merge-base --is-ancestor "$wt_head" "$branch" 2>/dev/null; then
+        echo "warn: $wt_dir is detached at $(G rev-parse --short "$wt_head" 2>/dev/null || echo "$wt_head") with commits not in $base or $branch — refusing to remove (they would be lost); inspect: git log $wt_head" >&2
+        incomplete=1; keep_wt=1
+      fi
+    fi
+    if [ "$keep_wt" = "0" ]; then
+      removed=0
+      for _try in 1 2 3; do
+        if G worktree remove "$wt_dir" 2>/dev/null || G worktree remove --force "$wt_dir" 2>/dev/null; then
+          removed=1; break
+        fi
+        sleep 1   # transient EBUSY: handles can take a beat to release after a kill
+      done
+      if [ "$removed" = "0" ]; then
+        echo "warn: could not remove worktree $wt_dir — some process is holding it (any process whose cwd is inside locks the folder on Windows); close sessions/terminals there or re-run with --kill-session" >&2
+        incomplete=1
+      fi
     fi
     G worktree prune 2>/dev/null
   fi
@@ -290,6 +442,19 @@ if [ "$delete_branch" = "1" ]; then
   fi
 else
   echo "ok: branch $branch kept (deletion requires --delete-branch)"
+fi
+
+# Phase 6: sync remote-tracking refs — report, never touch, the remote branch.
+if G remote get-url origin >/dev/null 2>&1; then
+  if G fetch --prune --quiet origin 2>/dev/null; then
+    if G show-ref --verify -q "refs/remotes/origin/$branch"; then
+      echo "note: origin/$branch still exists on the remote — left alone (finish never deletes remote branches); remove it yourself with: git push origin --delete $branch"
+    else
+      echo "ok: origin/$branch is not on the remote — stale tracking refs pruned"
+    fi
+  else
+    echo "warn: git fetch --prune origin failed (offline?) — remote-tracking refs may be stale"
+  fi
 fi
 
 echo "done: $branch -> $base on $(G rev-parse --short "$base")"
