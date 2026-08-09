@@ -106,12 +106,15 @@ Or let the plugin do it:
 Mimics Sourcetree's Gitflow **Finish Feature** button, deterministically
 (all logic lives in `scripts/finish-branch.sh`; the command is a thin
 wrapper). It first shows you a read-only *plan* — resolved branch, base,
-holding worktree, attached Claude session, and whether the merge will be
-clean — then:
+holding worktree, attached Claude session, remote-branch state, and whether
+the merge will be clean — then:
 
 1. **Releases the lock** — unlocks and detaches the `.claude/worktrees/*`
    worktree holding the branch (worktrees you created yourself are never
-   touched).
+   touched). Worktrees already sitting on a detached HEAD — the normal state
+   after a session ends, since releasing the branch *is* the delivery — are
+   found by their managed-worktree name instead, so the attached session and
+   folder still get cleaned up.
 2. **Merges** the branch into the base (`develop`/`dev`, or
    `CC_GITFLOW_REGULATOR_BASE`) with `--no-ff`, gitflow-style.
 3. **On conflict**, switches to the PR route: pushes the branch and opens a
@@ -124,6 +127,15 @@ clean — then:
    deletes its background job (`--kill-session`), and/or removes the worktree
    and deletes the branch with `git branch -d`, never `-D`
    (`--delete-branch`).
+5. **Syncs remote-tracking refs** — `git fetch --prune`, then *reports*
+   whether `origin/<branch>` still exists. Remote branches are never deleted:
+   in a shared repo that's your call, so the script prints the command and
+   leaves it to you.
+
+A branch that exists only on the remote (a background session pushed it
+without ever creating a local branch) is adopted local-first: the plan
+announces it, and finish creates the local branch from `origin/<branch>`
+before merging — no round-trip through the remote required.
 
 Both destructive flags are **off by default**. Claude will ask you before
 using either one unless you passed the flag yourself or just approved the
@@ -133,7 +145,11 @@ the only thing that enables them.
 Guardrails: it refuses to run if your main checkout has uncommitted tracked
 changes, if the branch's worktree is dirty (the work isn't finished), or if
 the branch is held by a worktree the plugin doesn't manage. It will not kill
-the session it is running in.
+the session it is running in, refuses to kill when more than one job matches
+the worktree (ambiguity is never resolved by guessing), and refuses to remove
+a detached worktree whose HEAD holds commits not yet in the base or the
+branch — `git branch -d` protects a *branch's* commits, and this is the
+equivalent protection for a detached tip.
 
 ## License
 
