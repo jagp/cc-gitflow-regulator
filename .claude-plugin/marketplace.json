@@ -7,11 +7,14 @@
   "metadata": {
     "description": "Marketplace for https://github.com/jagp, author of cc-gitflow-regulator."
   },
+  "renames": {
+    "claude-gitflow": "cc-gitflow-regulator"
+  },
   "plugins": [
     {
       "name": "cc-gitflow-regulator",
       "source": "./",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "description": "Guardrails ensuring Claude operates in Gitflow best practices (naming conventions, branch base, event emitting, branch wrap up)"
     }
   ]

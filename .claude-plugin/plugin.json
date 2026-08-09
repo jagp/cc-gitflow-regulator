@@ -1,6 +1,6 @@
 {
   "name": "cc-gitflow-regulator",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Ensuring Claude worktrees conform to Gitflow regulations (naming conventions, branch base, event emitting, clean up)",
   "author": {
     "name": "Jared Parmenter",
