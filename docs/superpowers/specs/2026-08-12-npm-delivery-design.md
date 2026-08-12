@@ -17,34 +17,15 @@ Two constraints shape everything below:
    because it *mounts* the plugin. An npm package has no mount point, so the
    npm path must resolve those references itself, at install time.
 
-2. **A second channel is a second way to register the same hooks.** This is not
-   hypothetical. See "Prior evidence" below.
+2. **A second channel is a second way to register the same hooks.** The
+   canonical collision: an install at user scope plus a committed
+   project-scope install — identical versions, identical source, and every
+   hook still fires twice.
 
-### Prior evidence: duplicate registration already happens
+Cost of a duplicate registration, per hook:
 
-Observed on the author's own machine, 2026-08-12 — a worktree creation emitted
-both a success and a failure from the same hook event:
-
-```
-PostToolUse:EnterWorktree says: gitflow: worktree branch renamed to feature/trunk-ignore-omnilog
-PostToolUse:EnterWorktree says: gitflow: could not rename worktree-trunk-ignore-omnilog
-                                to feature/trunk-ignore-omnilog (target may already exist)
-```
-
-Root cause: two live registrations of every hook.
-
-| Source                                    | Target                                          | Version         |
-| ----------------------------------------- | ----------------------------------------------- | --------------- |
-| `~/.claude/settings.json` (hand-wired)    | `~/.claude/hooks/worktree-gitflow.sh`           | unknown, stale  |
-| plugin `claude-gitflow@claude-gitflow`    | `plugins/cache/.../scripts/claude-gitflow.sh`   | **0.1.0**       |
-
-README:52 already warns against exactly this ("remove them when installing this
-plugin — otherwise both will fire"). The warning did not prevent the collision
-on the machine of the person who wrote it. **Prose is not a control.**
-
-Cost of the collision, per hook:
-
-- `rename` — noisy, misleading error; outcome still correct
+- `rename` — a second `git branch -m` against an already-renamed branch;
+  without idempotence, a misleading "target may already exist" error
 - `notify` — fires on every `Stop`, i.e. **every turn**; doubles process spawns
 - `end` — two processes racing to detach HEAD on one worktree; a correctness
   hazard, not merely waste
@@ -135,8 +116,8 @@ command. Same class of bug, different registry.
 Each hit is classified on four axes:
 
 - **scope** — user / user-local / project / project-local
-- **source** — `managed` (ours) / `marketplace` / `foreign` (hand-wired)
-- **version** — or `unknown`
+- **source** — `managed` (ours) / `marketplace`
+- **version**
 - **target** — path, and whether that path still exists
 
 **Duplicate detection needs no version information.** It is arithmetic over the
@@ -144,13 +125,8 @@ scan: count the entries firing each hook event. Version attribution is a
 separate concern, used only for staleness reporting. Keeping them independent
 is what keeps the scanner small.
 
-Every registration this project will produce from here on is version-attributable
-— marketplace installs through the cache's versioned directory, npm installs
-through `_managedBy`. There is no route back to unversioned wiring. `unknown`
-is therefore a plain fallback label in output, not a modeled state with its own
-severity tier: it describes pre-plugin hand-wiring, whose population is
-essentially the author's own machine, and it is caught by generic duplicate
-detection regardless.
+Every registration is version-attributable — marketplace installs through the
+cache's versioned directory, npm installs through `_managedBy`.
 
 Severity rules:
 
@@ -161,44 +137,25 @@ Severity rules:
 | vendored dir with no referencing registration  | warning  | no             |
 | version below the newest present               | warning  | yes            |
 
-Only the last rule consults versions. The duplicate-across-scopes case — a
-`managed` user-scope install plus a `managed` project-scope install, both
-current, both firing — is the one that does not age out, and it is caught by
-the first rule without any version comparison at all.
+Only the last rule consults versions. The canonical duplicate — a `managed`
+user-scope install plus a `managed` project-scope install, both current, both
+firing — is caught by the first rule without any version comparison at all.
 
 `doctor` exits non-zero on any error, so it is CI-usable and scriptable.
 
-Sample output:
+Sample output — the canonical scope collision, where both installs are ours,
+both current, and nothing is stale:
 
 ```
 $ npx cc-gitflow-regulator doctor
 
   ✗ DUPLICATE  PostToolUse[EnterWorktree] has 2 registrations
-      user     foreign      unknown  ~/.claude/hooks/worktree-gitflow.sh
-      user     marketplace  0.1.0    plugins/cache/claude-gitflow/.../claude-gitflow.sh
-  ✗ DUPLICATE  Stop has 2 registrations         → 2 processes per turn
-  ✗ DUPLICATE  SessionEnd has 2 registrations   → racing HEAD detach
-  ⚠ STALE      marketplace install is 0.1.0, latest is 0.3.1
-
-  3 errors, 1 warning.
-
-  To fix:
-    1. Remove lines 11-41 from ~/.claude/settings.json  (the hand-wired hooks)
-    2. /plugin update cc-gitflow-regulator
-```
-
-That example is transitional — it describes pre-plugin wiring that will age
-out. The durable case is scope collision, where both installs are ours, both
-current, and nothing is stale:
-
-```
-$ npx cc-gitflow-regulator doctor
-
-  ✗ DUPLICATE  Stop has 2 registrations         → 2 processes per turn
       user     managed  0.3.1  ~/.claude/settings.json
       project  managed  0.3.1  ./.claude/settings.json
+  ✗ DUPLICATE  Stop has 2 registrations         → 2 processes per turn
+  ✗ DUPLICATE  SessionEnd has 2 registrations   → racing HEAD detach
 
-  1 error.
+  3 errors.
 
   To fix: uninstall one scope —
     npx cc-gitflow-regulator uninstall --scope user
@@ -235,8 +192,8 @@ directory.
 installer reads it as the template for the three entries it merges, keeping one
 source of truth for hook definitions across both delivery channels.
 
-Refuse-by-default is deliberate. Warn-and-continue is what the README already
-does, and the evidence above shows it does not work.
+Refuse-by-default is deliberate. A warning that can be scrolled past is not a
+control; a duplicate installed today fires on every turn until someone notices.
 
 ### The managed block
 
@@ -290,7 +247,7 @@ the guardrails on clone.
 Deleting hooks from a user's `settings.json` is a destructive edit, and
 CLAUDE.md's "destructive steps gated on user interaction" applies to config as
 much as to `git reset`. `uninstall` removes our own managed block and nothing
-else; foreign entries are always the user's to remove.
+else; entries the installer did not write are always the user's to remove.
 
 ## Behavior change: `rename` becomes idempotent
 
@@ -298,7 +255,7 @@ If the current branch already equals `<prefix><name>`, the rename has already
 happened — exit 0 quietly instead of attempting `git branch -m` and reporting
 "target may already exist".
 
-This generalizes past the known collision. Any duplicate registration, from any
+Any duplicate registration, from any
 source, present or future, degrades to a silent no-op rather than a misleading
 error. The current message misattributes cause: it reads as a naming conflict
 when the real cause was being invoked twice. When a hook can legitimately run
@@ -334,8 +291,7 @@ There are zero tests today, so this is where they start. `bats-core`:
 - **end-to-end** — `install → doctor → uninstall` against a temp `$HOME`,
   asserting `settings.json` is byte-identical before and after
 - **collision** — install at user scope, then attempt project scope; assert
-  `install` refuses and exits non-zero, and that `--force` proceeds. This is
-  the durable collision case, so it is the one that gets the test.
+  `install` refuses and exits non-zero, and that `--force` proceeds.
 - **idempotence** — run `rename` twice, assert the second is a quiet exit 0
 
 ## Also in 0.3.1
@@ -348,10 +304,11 @@ There are zero tests today, so this is where they start. `bats-core`:
   exist and there is no rename redirect, so `/plugin marketplace add
   jagp/cc-gitflow-regulator` in README:48 is broken as published. Resolved by
   renaming the GitHub repo, which also aligns repo, plugin, and npm names.
-- Bump all four version references to 0.3.1.
+- Bump all four version references to 0.3.1 — deferred to the release cut,
+  after all in-scope work lands.
 
 ## Out of scope
 
 - Homebrew formula, `curl | bash` installer, Scoop manifest
-- Auto-repair of foreign hook entries
+- Auto-repair of hook entries the installer did not write
 - Migrating existing marketplace users to npm — the channels coexist
