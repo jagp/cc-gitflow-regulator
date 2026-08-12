@@ -103,7 +103,7 @@ channels ship the same `scripts/` directory.
 | Command     | Responsibility                                                        |
 | ----------- | --------------------------------------------------------------------- |
 | `install`   | scan → refuse on collision → prompt scope → copy → rewrite → merge     |
-| `uninstall` | remove only the `_managedBy` block                                     |
+| `uninstall` | remove only the `_managedBy` block; `--scope` picks which one         |
 | `doctor`    | report all registrations, versions, scopes; check runtime deps         |
 | `--version` | print version; consumed by the CI sync check                           |
 
@@ -139,20 +139,32 @@ Each hit is classified on four axes:
 - **version** — or `unknown`
 - **target** — path, and whether that path still exists
 
-Version attribution is asymmetric, and the model must accommodate that:
-our entries self-describe via `_managedBy`; marketplace installs reveal their
-version through the cache's versioned directory; hand-wired entries carry no
-version information at all. `unknown` is a first-class state.
+**Duplicate detection needs no version information.** It is arithmetic over the
+scan: count the entries firing each hook event. Version attribution is a
+separate concern, used only for staleness reporting. Keeping them independent
+is what keeps the scanner small.
+
+Every registration this project will produce from here on is version-attributable
+— marketplace installs through the cache's versioned directory, npm installs
+through `_managedBy`. There is no route back to unversioned wiring. `unknown`
+is therefore a plain fallback label in output, not a modeled state with its own
+severity tier: it describes pre-plugin hand-wiring, whose population is
+essentially the author's own machine, and it is caught by generic duplicate
+detection regardless.
 
 Severity rules:
 
-| Condition                                      | Severity |
-| ---------------------------------------------- | -------- |
-| >1 registration for the same hook event        | error    |
-| registration target file does not exist        | error    |
-| version below the newest present               | warning  |
-| vendored dir with no referencing registration  | warning  |
-| foreign entry (no version marker)              | warning  |
+| Condition                                      | Severity | Needs version? |
+| ---------------------------------------------- | -------- | -------------- |
+| >1 registration for the same hook event        | error    | no             |
+| registration target file does not exist        | error    | no             |
+| vendored dir with no referencing registration  | warning  | no             |
+| version below the newest present               | warning  | yes            |
+
+Only the last rule consults versions. The duplicate-across-scopes case — a
+`managed` user-scope install plus a `managed` project-scope install, both
+current, both firing — is the one that does not age out, and it is caught by
+the first rule without any version comparison at all.
 
 `doctor` exits non-zero on any error, so it is CI-usable and scriptable.
 
@@ -167,14 +179,34 @@ $ npx cc-gitflow-regulator doctor
   ✗ DUPLICATE  Stop has 2 registrations         → 2 processes per turn
   ✗ DUPLICATE  SessionEnd has 2 registrations   → racing HEAD detach
   ⚠ STALE      marketplace install is 0.1.0, latest is 0.3.1
-  ⚠ UNMANAGED  foreign hook has no version marker; cannot be auto-upgraded
 
-  3 errors, 2 warnings.
+  3 errors, 1 warning.
 
   To fix:
     1. Remove lines 11-41 from ~/.claude/settings.json  (the hand-wired hooks)
     2. /plugin update cc-gitflow-regulator
 ```
+
+That example is transitional — it describes pre-plugin wiring that will age
+out. The durable case is scope collision, where both installs are ours, both
+current, and nothing is stale:
+
+```
+$ npx cc-gitflow-regulator doctor
+
+  ✗ DUPLICATE  Stop has 2 registrations         → 2 processes per turn
+      user     managed  0.3.1  ~/.claude/settings.json
+      project  managed  0.3.1  ./.claude/settings.json
+
+  1 error.
+
+  To fix: uninstall one scope —
+    npx cc-gitflow-regulator uninstall --scope user
+```
+
+This is what a teammate committing `.claude/settings.json` produces for someone
+who already installed at user scope. Identical versions, identical source,
+still double-firing — which is why duplicate detection is version-independent.
 
 ### Install flow
 
@@ -301,8 +333,9 @@ There are zero tests today, so this is where they start. `bats-core`:
 - **unit** — the two risky pure functions: settings-merge and path-rewrite
 - **end-to-end** — `install → doctor → uninstall` against a temp `$HOME`,
   asserting `settings.json` is byte-identical before and after
-- **collision** — seed a foreign hook, assert `install` refuses and exits
-  non-zero, and that `--force` proceeds
+- **collision** — install at user scope, then attempt project scope; assert
+  `install` refuses and exits non-zero, and that `--force` proceeds. This is
+  the durable collision case, so it is the one that gets the test.
 - **idempotence** — run `rename` twice, assert the second is a quiet exit 0
 
 ## Also in 0.3.1
