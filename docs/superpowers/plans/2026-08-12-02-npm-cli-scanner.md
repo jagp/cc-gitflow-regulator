@@ -59,6 +59,10 @@ setup() {
   mkdir -p "$CLAUDE_CONFIG_DIR"
   REPO="$tmp/repo"
   git init -q -b main "$REPO"
+  # cwd decides repoRoot(): stay inside the hermetic repo so the scanner
+  # never reads the real checkout's .claude/settings*.json. Subshell per
+  # test — this cd cannot leak.
+  cd "$REPO"
 }
 
 @test "--version prints the package version" {
@@ -982,7 +986,7 @@ git commit -m "feat: doctor — report registrations, duplicates, staleness, run
 
 Replace the current Installation section body (the single fenced block) with:
 
-```markdown
+````markdown
 Two channels, same plugin — pick one. Installing both double-fires every
 hook; the npm installer refuses if it detects the other.
 
@@ -1004,7 +1008,7 @@ npx cc-gitflow-regulator uninstall   # removes exactly what install wrote
 `install` copies the scripts to a stable versioned directory under
 `.claude/`, wires the hooks with absolute paths, and marks everything it
 writes — so `uninstall` is surgical and never touches config you authored.
-```
+````
 
 - [ ] **Step 2: Extend CLAUDE.md Layout**
 

@@ -246,10 +246,16 @@ jobs:
         run: npx bats tests/
 ```
 
-- [ ] **Step 2: Validate locally what CI will run**
+- [ ] **Step 2: Validate locally what CI will run — and fix first-lint findings**
 
 Run: `node -e "JSON.parse(require('fs').readFileSync('.claude-plugin/plugin.json','utf8'))" && npx bats tests/`
-Expected: no output from node; `4 tests, 0 failures` from bats. (shellcheck runs in CI if not installed locally.)
+Expected: no output from node; `4 tests, 0 failures` from bats.
+
+`finish-branch.sh` (462 lines) has never been shellchecked — findings are
+likely, not a plan failure. If shellcheck is available locally, run
+`shellcheck scripts/*.sh` now and fix what it reports (or add targeted
+`# shellcheck disable=SCxxxx` with a one-line reason where the warning is
+wrong); otherwise budget for one fix-up commit after the first CI run.
 
 - [ ] **Step 3: Commit and confirm the workflow runs**
 
@@ -257,10 +263,12 @@ Expected: no output from node; `4 tests, 0 failures` from bats. (shellcheck runs
 git add .github/workflows/ci.yml
 git commit -m "ci: shellcheck, JSON validation, bats"
 git push -u origin feature/bump-0.3.1
-gh run watch --exit-status   # wait for green
+# non-interactive watch: grab the newest run id for this branch, then follow it
+run_id=$(gh run list --branch feature/bump-0.3.1 -L 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$run_id" --exit-status
 ```
 
-Expected: the `ci` run completes successfully.
+Expected: the `ci` run completes successfully (after any shellcheck fix-ups from Step 2).
 
 ---
 
