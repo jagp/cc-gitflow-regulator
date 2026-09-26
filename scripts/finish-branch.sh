@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude-gitflow finish-branch — deterministic Sourcetree-style "Finish Feature".
+# cc-gitflow-regulator finish-branch — deterministic Sourcetree-style "Finish Feature".
 #
 # Modes (wired to the /finish-branch command in commands/finish-branch.md):
 #   plan   <branch>   read-only: resolve branch/base/worktree/session and print
@@ -33,15 +33,15 @@
 #   0 ok   2 refused/preflight failed   3 merge conflict (PR route taken)
 #   4 cleanup incomplete
 #
-# Configuration: CLAUDE_GITFLOW_PREFIX, CLAUDE_GITFLOW_BASE (same as hooks),
-# CLAUDE_GITFLOW_JOBS_DIR (job-state location; default ~/.claude/jobs — meant
+# Configuration: CC_GITFLOW_REGULATOR_PREFIX, CC_GITFLOW_REGULATOR_BASE (same as hooks),
+# CC_GITFLOW_REGULATOR_JOBS_DIR (job-state location; default ~/.claude/jobs — meant
 # for tests).
 set -u
 
 mode="${1:-}"; shift 2>/dev/null || true
-PREFIX="${CLAUDE_GITFLOW_PREFIX:-feature/}"
-BASE_OVERRIDE="${CLAUDE_GITFLOW_BASE:-}"
-JOBS_DIR="${CLAUDE_GITFLOW_JOBS_DIR:-$HOME/.claude/jobs}"
+PREFIX="${CC_GITFLOW_REGULATOR_PREFIX:-feature/}"
+BASE_OVERRIDE="${CC_GITFLOW_REGULATOR_BASE:-}"
+JOBS_DIR="${CC_GITFLOW_REGULATOR_JOBS_DIR:-$HOME/.claude/jobs}"
 
 branch_arg=""; kill_session=0; delete_branch=0
 for a in "$@"; do
@@ -122,14 +122,14 @@ esac
 base=""
 if [ -n "$BASE_OVERRIDE" ]; then
   G show-ref --verify -q "refs/heads/$BASE_OVERRIDE" \
-    || fail "CLAUDE_GITFLOW_BASE=$BASE_OVERRIDE is not a local branch"
+    || fail "CC_GITFLOW_REGULATOR_BASE=$BASE_OVERRIDE is not a local branch"
   base="$BASE_OVERRIDE"
 else
   for b in develop dev; do
     if G show-ref --verify -q "refs/heads/$b"; then base="$b"; break; fi
   done
 fi
-[ -n "$base" ] || fail "no local base branch (develop/dev) — set CLAUDE_GITFLOW_BASE"
+[ -n "$base" ] || fail "no local base branch (develop/dev) — set CC_GITFLOW_REGULATOR_BASE"
 [ "$branch" = "$base" ] && fail "refusing: $branch is the base branch"
 
 # --- adopt an origin-only branch (finish) / pick the computation ref ---------
