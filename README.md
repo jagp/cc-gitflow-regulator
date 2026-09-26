@@ -49,9 +49,6 @@ when the work is done. This plugin fixes all three:
 /plugin install cc-gitflow-regulator@cc-gitflow-regulator
 ```
 
-> If you previously wired similar hooks directly into `~/.claude/settings.json`,
-> remove them when installing this plugin — otherwise both will fire.
-
 ## How it works
 
 | Hook   | Event                            | What it does                                                                                                                                                                                                                |
