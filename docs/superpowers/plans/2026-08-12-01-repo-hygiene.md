@@ -169,6 +169,10 @@ git commit -m "fix: rename treats losing a duplicate-registration race as quiet 
 
 ### Task 3: Align the GitHub repo slug
 
+> Completed 2026-09-26 via /rebrand-propagate, ratified in-session. The repo
+> is renamed, origin re-pointed, connectivity verified — Steps 1–3 are
+> verify-only for the plan executor.
+
 `plugin.json` `homepage`/`repository` and README's install command all say `jagp/cc-gitflow-regulator`; the actual repo is `jagp/claude-gitflow`, so those references resolve to nothing today. Direction chosen in design: rename the repo (GitHub redirects the old slug, so existing clones and the marketplace entry keep working).
 
 **Files:**
@@ -178,12 +182,12 @@ git commit -m "fix: rename treats losing a duplicate-registration race as quiet 
 - Consumes: nothing
 - Produces: a resolvable `jagp/cc-gitflow-regulator`; plan 3's release workflow assumes this slug
 
-- [ ] **Step 1: Confirm with the user, then rename** (outward-facing; user pre-approved in design, re-confirm before firing)
+- [x] **Step 1: Confirm with the user, then rename** (outward-facing; user pre-approved in design, re-confirm before firing)
 
 Run: `gh repo rename cc-gitflow-regulator -R jagp/claude-gitflow --yes`
 Expected: success line with the new URL.
 
-- [ ] **Step 2: Point the local remote at the new slug**
+- [x] **Step 2: Point the local remote at the new slug**
 
 ```bash
 git remote set-url origin https://github.com/jagp/cc-gitflow-regulator
@@ -191,7 +195,7 @@ git remote -v          # verify
 git fetch origin       # verify connectivity
 ```
 
-- [ ] **Step 3: Verify the published references now resolve**
+- [x] **Step 3: Verify the published references now resolve**
 
 Run: `gh repo view jagp/cc-gitflow-regulator --json name,url`
 Expected: `{"name":"cc-gitflow-regulator","url":"https://github.com/jagp/cc-gitflow-regulator"}`.
