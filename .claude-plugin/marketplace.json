@@ -14,7 +14,7 @@
     {
       "name": "cc-gitflow-regulator",
       "source": "./",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "description": "Guardrails ensuring Claude operates in Gitflow best practices (naming conventions, branch base, event emitting, branch wrap up)"
     }
   ]
