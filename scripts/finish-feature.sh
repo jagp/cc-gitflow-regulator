@@ -505,29 +505,53 @@ remove_worktree() {
 }
 
 # stop_job: end the background job whose session holds the worktree.
-#   1. find every process whose command line carries the job's session id
-#      (never this script itself)
-#   2. add all their descendants: a session's tool shells (and their console
+#   1. list this script's own ancestors (its shell, the Claude session that
+#      ran it, ...). They are never stopped: a session resumed from the job
+#      (`claude --resume <id>`) carries the same id in its command line
+#   2. find every other process whose command line carries the session id
+#   3. add all their descendants: a session's tool shells (and their console
 #      hosts) run inside the worktree but don't carry the session id
-#   3. stop them all, then pause so Windows releases the folder handles
-#   4. delete the job's record directory
+#   4. stop them all, then pause so Windows releases the folder handles
+#   5. delete the job's record directory
 # Called from the worktree-removal step only (Phase 5), when removal failed.
 stop_job() {
   if [ -n "$job_session" ]; then
     if command -v powershell.exe >/dev/null 2>&1; then
-      SID="$job_session" powershell.exe -NoProfile -Command '
+      # Git Bash keeps its own process tree; Windows parent ids stop at its
+      # boundary. So collect our Git Bash ancestors' Windows pids here
+      # (/proc/<pid>/winpid) and let PowerShell walk up from each of them too.
+      own_chain=""; walk="$$"
+      while [ -r "/proc/$walk/winpid" ]; do
+        own_chain="$own_chain $(cat "/proc/$walk/winpid")"
+        walk="$(cat "/proc/$walk/ppid" 2>/dev/null)"
+        [ "${walk:-0}" -gt 1 ] 2>/dev/null || break
+      done
+      SID="$job_session" OWN_CHAIN="$own_chain" powershell.exe -NoProfile -Command '
         $all = @(Get-CimInstance Win32_Process)
-        $ids = @($all | Where-Object { $_.CommandLine -match [regex]::Escape($env:SID) -and $_.ProcessId -ne $PID } |
+        $byId = @{}; $all | ForEach-Object { $byId[[int]$_.ProcessId] = $_ }
+        $ancestors = @()
+        $starts = @([int]$PID) + @(($env:OWN_CHAIN -split " ") | Where-Object { $_ } | ForEach-Object { [int]$_ })
+        foreach ($start in $starts) {   # from each, up to the root
+          $walk = $start
+          while ($byId.ContainsKey($walk) -and $ancestors -notcontains $walk) {
+            $ancestors += $walk; $walk = [int]$byId[$walk].ParentProcessId
+          }
+        }
+        $ids = @($all | Where-Object { $_.CommandLine -match [regex]::Escape($env:SID) -and $ancestors -notcontains $_.ProcessId } |
                  ForEach-Object { $_.ProcessId })
         do {   # walk down the tree until no new children turn up
-          $children = @($all | Where-Object { $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId -and $_.ProcessId -ne $PID } |
+          $children = @($all | Where-Object { $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId -and $ancestors -notcontains $_.ProcessId } |
                         ForEach-Object { $_.ProcessId })
           $ids += $children
         } while ($children.Count -gt 0)
         $ids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }' >/dev/null 2>&1
     elif command -v pgrep >/dev/null 2>&1; then
+      ancestors=" "; walk="$$"
+      while [ -n "$walk" ] && [ "$walk" -gt 1 ] 2>/dev/null; do   # up to init
+        ancestors="$ancestors$walk "; walk="$(ps -o ppid= -p "$walk" 2>/dev/null | tr -d ' ')"
+      done
       for process_id in $(pgrep -f "$job_session" 2>/dev/null); do
-        [ "$process_id" != "$$" ] || continue
+        case "$ancestors" in *" $process_id "*) continue ;; esac
         pkill -P "$process_id" 2>/dev/null   # its direct children first
         kill "$process_id" 2>/dev/null
       done
