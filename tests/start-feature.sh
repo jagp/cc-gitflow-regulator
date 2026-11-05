@@ -16,7 +16,13 @@ check "--create-base makes develop, branches off it, switches to it" \
   'git show-ref -q --verify refs/heads/develop && [ "$(git branch --show-current)" = feature/add-login-form ]'
 check "records the base for finish" '[ "$(git config --get gitflow.branch.feature/add-login-form.base)" = develop ]'
 out="$(start start "add login form" 2>&1)"
-check "an existing branch is refused" 'echo "$out" | grep -q "already exists" && echo "$out" | grep -q exit=2'
+check "an existing branch is refused by the guard" 'echo "$out" | grep -q "already exists locally — check it out instead" && echo "$out" | grep -q exit=2'
+
+# a branch that exists only on origin: git alone would happily create a second one
+fresh; git switch -q develop; git push -q origin develop:refs/heads/feature/theirs
+out="$(start start theirs 2>&1)"
+check "a branch that exists only on origin is refused" \
+  'echo "$out" | grep -q "already exists on origin" && ! git show-ref -q --verify refs/heads/feature/theirs'
 
 # dirty tracked files are refused (that is /feature-dirty's job)
 fresh; git switch -q develop; echo x > tracked.txt; git add tracked.txt; git commit -q -m t; echo y >> tracked.txt
