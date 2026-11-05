@@ -210,6 +210,21 @@ $(G worktree list --porcelain)
 EOF
 fi
 
+# Last fallback: an ORPHAN folder. A failed `git worktree remove` deregisters
+# the worktree but can leave its (emptied) folder behind, so git no longer
+# lists it. A folder for this branch under .claude/worktrees with no .git
+# inside is that leftover: it holds no git data and finish only deletes it.
+# Every `git -C "$wt_dir"` below is skipped for it — with no .git inside, git
+# would run against the main checkout instead.
+wt_orphan=0
+if [ -z "$wt_dir" ]; then
+  for candidate in "$root/.claude/worktrees/$short" "$root/.claude/worktrees/worktree-$short"; do
+    if [ -d "$candidate" ] && [ ! -e "$candidate/.git" ]; then
+      wt_dir="$candidate"; wt_attached=0; wt_orphan=1; break
+    fi
+  done
+fi
+
 wt_is_managed=0
 case "$(norm "$wt_dir")" in */.claude/worktrees/*) wt_is_managed=1 ;; esac
 here="$(pwd -W 2>/dev/null || pwd)"   # -W: Git Bash prints the Windows-style path
@@ -270,7 +285,10 @@ if [ "$mode" = "plan" ]; then
   src="default"; [ "$base" = "$recorded_base" ] && src="recorded by /start-feature"
   echo "plan: base          $base ($src)"
   if [ -n "$wt_dir" ]; then
-    st="clean"; [ -n "$(git -C "$wt_dir" status --porcelain -- . ':(exclude).claude' 2>/dev/null)" ] && st="DIRTY"
+    st="clean"
+    if [ "$wt_orphan" = "1" ]; then st="ORPHAN — git already dropped this worktree; finish deletes the leftover folder"
+    elif [ -n "$(git -C "$wt_dir" status --porcelain -- . ':(exclude).claude' 2>/dev/null)" ]; then st="DIRTY"
+    fi
     lk=""; [ "$wt_locked" = "1" ] && lk=", git-locked"
     att=""; [ "$wt_attached" = "0" ] && att=", DETACHED — matched by managed-worktree name"
     slf=""; [ "$wt_is_self" = "1" ] && slf=" (this session's own worktree)"
@@ -346,7 +364,8 @@ G rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
 if [ -n "$wt_dir" ]; then
   [ "$wt_is_managed" = "1" ] \
     || fail "worktree $wt_dir was not created by Claude — release it yourself, then re-run"
-  leftovers="$(git -C "$wt_dir" status --porcelain -- . ':(exclude).claude' 2>/dev/null)"
+  leftovers=""
+  [ "$wt_orphan" = "1" ] || leftovers="$(git -C "$wt_dir" status --porcelain -- . ':(exclude).claude' 2>/dev/null)"
   if [ -n "$leftovers" ]; then
     if [ "$stash_changes" = "1" ]; then
       git -C "$wt_dir" stash push -u -q -m "finish-feature: leftovers from $branch" -- . ':(exclude).claude' \
@@ -366,7 +385,9 @@ fi
 # Phase 2: release the lock — detach the worktree so the branch is free.
 if [ -n "$wt_dir" ]; then
   [ "$wt_locked" = "1" ] && G worktree unlock "$wt_dir" 2>/dev/null
-  if [ "$wt_attached" = "1" ]; then
+  if [ "$wt_orphan" = "1" ]; then
+    echo "ok: $wt_dir is a leftover folder git already dropped — no branch lock to release"
+  elif [ "$wt_attached" = "1" ]; then
     git -C "$wt_dir" switch --detach -q || fail "could not detach worktree $wt_dir"
     echo "ok: released $branch from $wt_dir"
   else
@@ -500,7 +521,7 @@ else
     if [ "$wt_is_self" = "1" ]; then
       echo "warn: not removing $wt_dir — this session is running inside it; to finish the cleanup, run /finish-feature $branch from a session in $root"
       incomplete=1; keep_wt=1
-    elif [ "$wt_attached" = "0" ]; then
+    elif [ "$wt_attached" = "0" ] && [ "$wt_orphan" = "0" ]; then
       # A detached worktree may hold committed work that no branch name
       # protects — `git branch -d` below guards the BRANCH, nothing guards a
       # detached tip. Refuse rather than lose commits.
