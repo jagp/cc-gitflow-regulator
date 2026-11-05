@@ -3,15 +3,16 @@
 ## Layout
 
 - `scripts/cc-gitflow-regulator.sh` — all logic. Subcommands `rename` / `notify` / `end`
-- `scripts/finish-feature.sh` - wrap-up, handles killing session & removing cruft
-- `scripts/start-feature.sh` - start-up counterpart: syncs base, creates `feature/<name>`, detects the test suite. Modes `plan` / `start`
+- `scripts/finish-feature.sh` - wrap-up: merge into the recorded base, push it, remove worktree + local branch, offer the origin delete. Modes `plan` / `finish` / `delete-remote`
+- `scripts/start-feature.sh` - start-up counterpart: syncs base, creates `feature/<name>`, records its base, detects the test suite. Modes `plan` / `start`
 - `hooks/hooks.json` — wires subcommands to `PostToolUse[EnterWorktree]`, `Stop` (async), `SessionEnd`.
 
 ## Considerations
 
 - Gitflow: feature branches off `develop` (configurable)
 - Hooks only target `.claude/worktrees/`; the user-invoked commands (`/start-feature`, `/finish-feature`) act on the user's own checkout
-- Pushing to remote only on user's go ahead
-- Destructive steps (reset, detach) gated on user interaction
+- Hooks never push. `/finish-feature` pushes the merged base (opt-out: `CC_GITFLOW_REGULATOR_PUSH_MERGED=0`) and, on conflict, the feature branch for its PR; never a force push
+- Default-on: deleting a local branch once a long-lived branch holds it, and stopping a `done`/`failed` background job that holds its worktree
+- Gated on the user's explicit yes: deleting a branch on origin, discarding worktree leftovers, stopping a `blocked` job
 
 
