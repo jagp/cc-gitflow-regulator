@@ -75,6 +75,7 @@ All optional, via environment variables (e.g. the `"env"` block in
 | ------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `CC_GITFLOW_REGULATOR_PREFIX`         | `feature/`                | Branch prefix for renamed worktree branches                                                                                                      |
 | `CC_GITFLOW_REGULATOR_BASE`           | auto                      | Base branch to fork from. Auto-detect order: `develop`, `dev`, `origin/develop`, `origin/dev`. If none exist, worktrees keep their default base. |
+| `CC_GITFLOW_REGULATOR_PUSH_MERGED`    | on                        | `/finish-feature` pushes the base branch to origin after merging. Set `0` (or `false`/`off`/`no`) to keep merges local.                          |
 | `CC_GITFLOW_REGULATOR_IFTTT_EVENT`    | `claude_work_done`        | IFTTT Maker Webhooks event name                                                                                                                  |
 | `CC_GITFLOW_REGULATOR_IFTTT_KEY_FILE` | `~/.claude/ifttt-key.txt` | Where your IFTTT Maker key lives                                                                                                                 |
 
