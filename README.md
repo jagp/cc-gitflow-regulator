@@ -202,6 +202,17 @@ plugin doesn't manage. It never stops the session it is running in, or any
 job when several match the worktree, and it refuses to remove a detached
 worktree whose HEAD holds commits not yet in the base or the branch.
 
+## Tests
+
+```
+bash tests/start-feature.sh
+bash tests/finish-feature.sh
+bash tests/stalled-jobs.sh    # Windows only; skips elsewhere
+```
+
+Each builds a throwaway origin and clone in a temp folder, prints one
+PASS/FAIL line per case, and exits 1 if any case fails.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
