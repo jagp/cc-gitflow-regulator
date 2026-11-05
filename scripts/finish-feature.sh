@@ -454,6 +454,12 @@ fi
 #     It is safe to delete: preflight confirmed it sits under .claude/worktrees.
 remove_worktree() {
   local attempt
+  # Hard guard for the folder delete below: only a named folder directly
+  # under this repo's .claude/worktrees, never an empty or outside path.
+  case "$(norm "$wt_dir")" in
+    "$(norm "$root")"/.claude/worktrees/?*) ;;
+    *) echo "warn: refusing to delete $wt_dir — not under $root/.claude/worktrees" >&2; return 1 ;;
+  esac
   for attempt in 1 2 3; do
     if G worktree list --porcelain | grep -qxF "worktree $wt_dir"; then
       G worktree remove "$wt_dir" 2>/dev/null || G worktree remove --force "$wt_dir" 2>/dev/null
