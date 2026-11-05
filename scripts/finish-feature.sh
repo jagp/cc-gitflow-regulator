@@ -316,7 +316,10 @@ if [ "$mode" = "plan" ]; then
   if [ "$keep_branch" = "1" ]; then
     echo "plan: cleanup       keep worktree and $branch (--keep-branch)"
   else
-    echo "plan: cleanup       remove worktree (if any) + delete $branch (--keep-branch skips this)"
+    case " develop dev main master $BASE_OVERRIDE " in
+      *" $base "*) echo "plan: cleanup       remove worktree (if any) + delete $branch (--keep-branch skips this)" ;;
+      *) echo "plan: cleanup       keep worktree and $branch — $base is temporary; deleted on a re-run once $base lands in develop/main" ;;
+    esac
   fi
   exit 0
 fi
@@ -444,7 +447,21 @@ stop_job() {
 }
 
 # Phase 5: delete worktree + branch (default; --keep-branch skips it).
-if [ "$keep_branch" != "1" ]; then
+# Deletion waits until a LONG-LIVED branch holds the work: develop, dev, main,
+# master, or CC_GITFLOW_REGULATOR_BASE. A release/hotfix base is temporary and
+# gets deleted itself, so a feature merged only into one is kept until that
+# base lands in a long-lived branch.
+long_lived_holder=""
+for candidate in develop dev main master $BASE_OVERRIDE; do
+  if G show-ref --verify -q "refs/heads/$candidate"      && G merge-base --is-ancestor "$branch" "$candidate" 2>/dev/null; then
+    long_lived_holder="$candidate"; break
+  fi
+done
+if [ "$keep_branch" = "1" ]; then
+  echo "ok: worktree and branch $branch kept (--keep-branch)"
+elif [ -z "$long_lived_holder" ]; then
+  echo "ok: worktree and branch $branch kept — its work is only in $base, a temporary branch; re-run /finish-feature $branch once $base is merged into develop or main"
+else
   if [ -n "$wt_dir" ]; then
     keep_wt=0
     if [ "$wt_is_self" = "1" ]; then
@@ -477,16 +494,16 @@ if [ "$keep_branch" != "1" ]; then
     fi
     G worktree prune 2>/dev/null
   fi
-  # -d only: git itself verifies the branch is fully merged; never force.
-  if G branch -d "$branch" >/dev/null 2>&1; then
+  # -D, not -d: git's own -d check compares against whatever the main checkout
+  # has checked out, not develop/main. The long-lived containment check above
+  # is the real guard, and it already passed.
+  if G branch -D "$branch" >/dev/null 2>&1; then
     G config --remove-section "gitflow.branch.$branch" 2>/dev/null   # branch -d only clears branch.<name>.*
-    echo "ok: deleted branch $branch"
+    echo "ok: deleted branch $branch (its work is in $long_lived_holder)"
   else
-    echo "warn: git refused to delete $branch (not fully merged?) — left in place" >&2
+    echo "warn: could not delete $branch — left in place" >&2
     incomplete=1
   fi
-else
-  echo "ok: worktree and branch $branch kept (--keep-branch)"
 fi
 
 # Phase 6: sync remote-tracking refs — report, never touch, the remote branch.
