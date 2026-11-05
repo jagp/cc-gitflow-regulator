@@ -119,8 +119,14 @@ case "$resolved" in
 esac
 
 # --- resolve base branch -----------------------------------------------------
+# 1. The base start-feature.sh recorded for this branch (git-flow's key), if
+#    that branch still exists locally — it is where the feature came from.
+# 2. Else CC_GITFLOW_REGULATOR_BASE, else the first of develop/dev.
 base=""
-if [ -n "$BASE_OVERRIDE" ]; then
+recorded_base="$(G config --get "gitflow.branch.$branch.base" 2>/dev/null || true)"
+if [ -n "$recorded_base" ] && G show-ref --verify -q "refs/heads/$recorded_base"; then
+  base="$recorded_base"
+elif [ -n "$BASE_OVERRIDE" ]; then
   G show-ref --verify -q "refs/heads/$BASE_OVERRIDE" \
     || fail "CC_GITFLOW_REGULATOR_BASE=$BASE_OVERRIDE is not a local branch"
   base="$BASE_OVERRIDE"
@@ -248,7 +254,8 @@ if [ "$mode" = "plan" ]; then
   echo "plan: branch        $branch ($ahead commit(s) ahead of $base)"
   [ "$branch_is_remote_only" = "1" ] \
     && echo "plan: adopt         no local branch — finish will create $branch from origin/$branch first"
-  echo "plan: base          $base"
+  src="default"; [ "$base" = "$recorded_base" ] && src="recorded by /start-feature"
+  echo "plan: base          $base ($src)"
   if [ -n "$wt_dir" ]; then
     st="clean"; [ -n "$(git -C "$wt_dir" status --porcelain 2>/dev/null)" ] && st="DIRTY"
     lk=""; [ "$wt_locked" = "1" ] && lk=", git-locked"
@@ -435,6 +442,7 @@ if [ "$delete_branch" = "1" ]; then
   fi
   # -d only: git itself verifies the branch is fully merged; never force.
   if G branch -d "$branch" >/dev/null 2>&1; then
+    G config --remove-section "gitflow.branch.$branch" 2>/dev/null   # branch -d only clears branch.<name>.*
     echo "ok: deleted branch $branch"
   else
     echo "warn: git refused to delete $branch (not fully merged?) — left in place" >&2
