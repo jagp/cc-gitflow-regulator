@@ -5,7 +5,7 @@
 #   plan   <branch>   read-only: resolve branch/base/worktree/session and print
 #                     exactly what `finish` would do; makes NO changes (no refs
 #                     created, no fetch)
-#   finish <branch> [--keep-branch] [--stash-changes|--discard-changes]
+#   finish <branch> [--keep-branch] [--stash-changes|--discard-changes] [--kill-stalled-session]
 #                     merge <branch> into the gitflow base with --no-ff, then
 #                     push the base to origin (CC_GITFLOW_REGULATOR_PUSH_MERGED=0
 #                     turns that off). On conflict: abort, push the branch and
@@ -16,6 +16,10 @@
 #                     finish refuse before merging, unless one of:
 #                       --stash-changes    stash them (outlives the worktree)
 #                       --discard-changes  let them go with the worktree
+#                     If a BLOCKED background job holds the worktree, finish
+#                     prints `ask: kill-stalled ...`; the re-run after the
+#                     user's yes adds:
+#                       --kill-stalled-session  stop that job, then remove
 #
 # Branch resolution is local-first: if no local branch matches but an
 # origin/<candidate> does (background sessions publish to origin without ever
@@ -82,7 +86,7 @@ done
   && { echo "error: --stash-changes and --discard-changes are mutually exclusive" >&2; exit 2; }
 
 case "$mode" in plan|finish|delete-remote) ;; *)
-  echo "usage: finish-feature.sh plan|finish <branch> [--keep-branch] [--stash-changes|--discard-changes]" >&2
+  echo "usage: finish-feature.sh plan|finish <branch> [--keep-branch] [--stash-changes|--discard-changes] [--kill-stalled-session]" >&2
   echo "       finish-feature.sh delete-remote <branch> <sha>" >&2
   exit 2 ;;
 esac
