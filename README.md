@@ -205,6 +205,7 @@ worktree whose HEAD holds commits not yet in the base or the branch.
 ## Tests
 
 ```
+bash tests/hooks.sh
 bash tests/start-feature.sh
 bash tests/finish-feature.sh
 bash tests/stalled-jobs.sh    # Windows only; skips elsewhere
