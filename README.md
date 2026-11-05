@@ -114,7 +114,9 @@ acts). In order, it:
    main/master.
 5. Fetches origin and fast-forwards the base only if it is strictly behind.
    A base that is ahead or has diverged is reported and never forced.
-6. Creates the branch from the base and switches the current checkout to it.
+6. Creates the branch from the base, switches the current checkout to it,
+   and records the base in git config (`gitflow.branch.<branch>.base`, the
+   key git-flow uses) so `/finish-feature` merges back into it.
 7. Detects the test suite and runs it once as a baseline, so failures that
    were already there aren't mistaken for new ones. Detected runners:
    package.json `test` script (npm/pnpm/yarn/bun), pytest, cargo, go,
