@@ -28,8 +28,16 @@
 # is never checked out there. Those are recovered via the plugin's own naming
 # contract (rename hook): .claude/worktrees/<name> <-> <prefix><name>.
 #
-# The remote branch is NEVER deleted: finish runs `git fetch --prune` to drop
-# stale remote-tracking refs and reports whether origin/<branch> still exists.
+# What reaches origin, exactly:
+#   - pushed:  the base branch after a clean merge (CC_GITFLOW_REGULATOR_PUSH_MERGED=0
+#              turns this off); the feature branch on a merge conflict, for its PR
+#   - deleted: origin/<branch> only via the delete-remote mode, which the
+#              /finish-feature command runs only after the user says yes to the
+#              `ask: delete-remote` line, and only if origin hasn't moved
+#   - never:   a force push, or any other branch
+#
+#   delete-remote <branch> <sha>
+#                     delete origin/<branch> if it still points at <sha>
 #
 # Unlike the hook script (cc-gitflow-regulator.sh), this is user-invoked and
 # MUST fail loudly. Exit codes:
@@ -351,7 +359,7 @@ if [ "$mode" = "plan" ]; then
   fi
   if G remote get-url origin >/dev/null 2>&1; then
     if G show-ref --verify -q "refs/remotes/origin/$branch"; then
-      echo "plan: remote        origin/$branch exists — finish will fetch --prune and report it; remote branches are NEVER auto-deleted"
+      echo "plan: remote        origin/$branch exists — after cleanup finish will ask before deleting it (only if it holds nothing beyond your branch)"
     else
       echo "plan: remote        no origin/$branch known locally — finish will fetch --prune to sync"
     fi
@@ -438,7 +446,7 @@ else
     if command -v gh >/dev/null 2>&1; then
       pr_body="Opened by /finish-feature: the local --no-ff merge of \`$branch\` into \`$base\` hit conflicts, so the finish switched to the PR route.
 
-**When this PR is merged, the finish is not done yet** — run \`/finish-feature $branch\` again to resume it. The command will detect the branch is now contained in \`$base\` and complete the remaining steps: verify the worktree lock is released, and (with your go-ahead) kill the attached session and delete the branch."
+**When this PR is merged, the finish is not done yet** — run \`/finish-feature $branch\` again to resume it. The command will detect the branch is now contained in \`$base\` and complete the remaining steps: remove the worktree, delete the local branch, and ask whether to delete this branch on origin too."
       url="$(cd "$root" && gh pr create --base "$base" --head "$branch" \
         --title "Merge $branch into $base" \
         --body "$pr_body" 2>/dev/null)"
