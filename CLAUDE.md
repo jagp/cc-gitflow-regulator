@@ -5,6 +5,7 @@
 - `scripts/cc-gitflow-regulator.sh` — all logic. Subcommands `rename` / `notify` / `end`
 - `scripts/finish-feature.sh` - wrap-up: merge into the recorded base, push it, remove worktree + local branch, offer the origin delete. Modes `plan` / `finish` / `delete-remote`
 - `scripts/start-feature.sh` - start-up counterpart: syncs base, creates `feature/<name>`, records its base, detects the test suite. Modes `plan` / `start`
+- `tests/*.sh` — behaviour tests for the two command scripts (`tests/lib.sh` builds a throwaway origin + clone); run them after any script change
 - `hooks/hooks.json` — wires subcommands to `PostToolUse[EnterWorktree]`, `Stop` (async), `SessionEnd`.
 
 ## Considerations
