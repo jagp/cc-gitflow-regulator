@@ -1,6 +1,6 @@
 ---
 description: "Alias of /finish-feature: merge a gitflow branch into its base, push the base, and clean up."
-argument-hint: "[branch] [--keep-branch] [--stash-changes|--discard-changes]"
+argument-hint: "[branch] [--keep-branch] [--stash-changes|--discard-changes] [--kill-stalled-session]"
 allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
 ---
 

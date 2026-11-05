@@ -1,6 +1,6 @@
 ---
 description: "Finish a gitflow branch (Sourcetree-style): --no-ff merge into its base, push the base to origin, delete the worktree and local branch (--keep-branch keeps them), then ask before deleting the branch on origin."
-argument-hint: "[branch] [--keep-branch] [--stash-changes|--discard-changes]"
+argument-hint: "[branch] [--keep-branch] [--stash-changes|--discard-changes] [--kill-stalled-session]"
 allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
 ---
 
@@ -62,7 +62,7 @@ own judgment.
 Run (with `--keep-branch` only per step 3, plus any leftover flag chosen in step 2):
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--keep-branch] [--stash-changes|--discard-changes]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--keep-branch] [--stash-changes|--discard-changes] [--kill-stalled-session]
 ```
 
 ## 5. Report

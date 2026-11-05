@@ -135,7 +135,7 @@ Or let the plugin do it:
 ## Finishing a branch: `/finish-feature`
 
 ```
-/finish-feature [branch] [--keep-branch] [--stash-changes|--discard-changes]
+/finish-feature [branch] [--keep-branch] [--stash-changes|--discard-changes] [--kill-stalled-session]
 ```
 
 `/finish-branch` is an alias.
