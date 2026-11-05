@@ -67,7 +67,9 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--kill-s
 
 Relay the script's summary lines. Exit codes:
 
-- `0` — finished; report merge commit, and what was/wasn't cleaned up
+- `0` — finished; report merge commit, whether the base was pushed to origin
+  (or that no origin exists / pushing is switched off), and what was/wasn't
+  cleaned up
 - `2` — refused by a preflight guard; report the reason verbatim, fix nothing
 - `3` — merge conflicted; the script already pushed the branch and opened a PR
   (the only path that pushes, and it never happens without the user having
@@ -77,7 +79,7 @@ Relay the script's summary lines. Exit codes:
   is contained in the base and performs the remaining cleanup only. Relay the
   PR URL and say exactly that
 - `4` — merged, but cleanup incomplete; report the warnings verbatim. Causes
-  include: branch not deletable, an ambiguous session match (refused to kill),
+  include: the base could not be pushed to origin, branch not deletable, an ambiguous session match (refused to kill),
   a detached worktree holding commits not yet in the base (refused to remove —
   they would be lost), or a folder some process still holds (on Windows, any
   process whose cwd is inside a folder locks it against deletion — EBUSY)

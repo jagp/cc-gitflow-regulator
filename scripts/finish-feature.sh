@@ -6,9 +6,10 @@
 #                     exactly what `finish` would do; makes NO changes (no refs
 #                     created, no fetch)
 #   finish <branch> [--kill-session] [--delete-branch]
-#                     merge <branch> into the gitflow base with --no-ff.
-#                     On conflict: abort, push the branch and open a PR instead
-#                     (the only case where anything is pushed). Destructive
+#                     merge <branch> into the gitflow base with --no-ff, then
+#                     push the base to origin (CC_GITFLOW_REGULATOR_PUSH_MERGED=0
+#                     turns that off). On conflict: abort, push the branch and
+#                     open a PR instead. Destructive
 #                     steps are OFF unless their flag is passed:
 #                       --kill-session   kill the Claude session attached to the
 #                                        branch's worktree and delete its job dir
@@ -34,6 +35,7 @@
 #   4 cleanup incomplete
 #
 # Configuration: CC_GITFLOW_REGULATOR_PREFIX, CC_GITFLOW_REGULATOR_BASE (same as hooks),
+# CC_GITFLOW_REGULATOR_PUSH_MERGED (default on; 0 keeps the merge local),
 # CC_GITFLOW_REGULATOR_JOBS_DIR (job-state location; default ~/.claude/jobs — meant
 # for tests).
 set -u
@@ -42,6 +44,11 @@ mode="${1:-}"; shift 2>/dev/null || true
 PREFIX="${CC_GITFLOW_REGULATOR_PREFIX:-feature/}"
 BASE_OVERRIDE="${CC_GITFLOW_REGULATOR_BASE:-}"
 JOBS_DIR="${CC_GITFLOW_REGULATOR_JOBS_DIR:-$HOME/.claude/jobs}"
+# Push the merged base to origin unless switched off (0/false/off/no).
+case "$(printf '%s' "${CC_GITFLOW_REGULATOR_PUSH_MERGED:-1}" | tr '[:upper:]' '[:lower:]')" in
+  0|false|off|no) push_merged=0 ;;
+  *) push_merged=1 ;;
+esac
 
 branch_arg=""; kill_session=0; delete_branch=0
 for a in "$@"; do
@@ -291,6 +298,13 @@ if [ "$mode" = "plan" ]; then
   else
     echo "plan: merge         conflict prediction unavailable (git < 2.38) — finish will try and abort safely"
   fi
+  if [ "$push_merged" = "0" ]; then
+    echo "plan: push          off (CC_GITFLOW_REGULATOR_PUSH_MERGED) — $base stays local"
+  elif G remote get-url origin >/dev/null 2>&1; then
+    echo "plan: push          finish will push $base to origin after the merge"
+  else
+    echo "plan: push          no origin remote — nothing will be pushed"
+  fi
   if G remote get-url origin >/dev/null 2>&1; then
     if G show-ref --verify -q "refs/remotes/origin/$branch"; then
       echo "plan: remote        origin/$branch exists — finish will fetch --prune and report it; remote branches are NEVER auto-deleted"
@@ -374,6 +388,20 @@ else
 fi
 
 incomplete=0
+
+# Phase 3b: publish the merged base to origin, so the merge exists off this
+# machine. Plain push only: if origin has moved, the push is rejected and we
+# report it — never force. Off when CC_GITFLOW_REGULATOR_PUSH_MERGED=0.
+if [ "$push_merged" = "0" ]; then
+  echo "ok: $base not pushed (CC_GITFLOW_REGULATOR_PUSH_MERGED is off)"
+elif ! G remote get-url origin >/dev/null 2>&1; then
+  echo "ok: checked for an origin remote to push $base to — none configured, nothing pushed"
+elif G push -q origin "$base" 2>/dev/null; then
+  echo "ok: pushed $base to origin"
+else
+  echo "warn: could not push $base to origin (rejected or offline) — the merge is local only; push it yourself" >&2
+  incomplete=1
+fi
 
 # Phase 4: kill the attached session (opt-in via --kill-session).
 if [ "$kill_session" = "1" ] && [ "$job_matches" -gt 1 ]; then
