@@ -24,7 +24,8 @@
 #      the /finish-feature merge needs; it is local only.
 #   5. Sync the base with origin (fast-forward only; anything else is
 #      reported, never forced).
-#   6. Create the branch from the base and switch to it.
+#   6. Create the branch from the base, switch to it, and record the base in
+#      git config (gitflow.branch.<branch>.base) for finish-feature.sh.
 #   7. Report the test command(s) found, so the caller can run a baseline
 #      before any changes are made.
 #
@@ -189,6 +190,12 @@ if [ "$mode" = "plan" ]; then
 else
   git -C "$here" switch -q -c "$branch" "$base_ref" || fail "could not create $branch from $base"
   echo "ok: created $branch from $base at $(git -C "$here" rev-parse --short HEAD) — now checked out in $here (not pushed)"
+  # Record the base so finish-feature.sh merges back into it rather than
+  # guessing. Git itself never remembers what a branch was created from.
+  # The key is git-flow's own (gitflow.branch.<branch>.base), so git-flow
+  # tooling reads the same record.
+  G config "gitflow.branch.$branch.base" "$base"
+  echo "ok: recorded base $base for $branch (git config gitflow.branch.$branch.base)"
 fi
 
 # --- 7. test suite detection ----------------------------------------------------------------
