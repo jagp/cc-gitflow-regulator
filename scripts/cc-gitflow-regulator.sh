@@ -68,7 +68,7 @@ stamp_head() {
 
 # Keep .claude/worktrees/ out of the index: a `git add -A` run inside the repo
 # would otherwise record each worktree as a gitlink, leaving the main checkout
-# permanently "dirty" and blocking /finish-branch. info/exclude is per-clone,
+# permanently "dirty" and blocking /finish-feature. info/exclude is per-clone,
 # so the user's repo needs no committed .gitignore change.
 ensure_worktrees_excluded() {
   ex="$common/info/exclude"
