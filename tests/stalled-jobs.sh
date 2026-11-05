@@ -13,11 +13,16 @@ command -v powershell.exe >/dev/null 2>&1 || { echo "SKIP  stalled-job tests nee
 W=.claude/worktrees
 gone() { ! git show-ref -q --verify "refs/heads/$1"; }
 
-# hold <worktree> <id>: park a hidden process inside the folder
+# hold <worktree> <id>: park a hidden process inside the folder, then wait
+# (up to 15s) until Windows lists it, rather than guessing a fixed delay
 hold() {
-  SESSION="$2" FOLDER="$(cd "$1" && pwd -W)" powershell.exe -NoProfile -Command \
-    'Start-Process powershell -WindowStyle Hidden -WorkingDirectory $env:FOLDER -ArgumentList "-NoProfile","-Command","Start-Sleep 120 # $env:SESSION"'
-  sleep 2
+  SESSION="$2" FOLDER="$(cd "$1" && pwd -W)" powershell.exe -NoProfile -Command '
+    Start-Process powershell -WindowStyle Hidden -WorkingDirectory $env:FOLDER -ArgumentList "-NoProfile","-Command","Start-Sleep 120 # $env:SESSION"
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline -and -not (Get-CimInstance Win32_Process |
+           Where-Object { $_.Name -eq "powershell.exe" -and $_.CommandLine -match "Start-Sleep 120 # $env:SESSION" })) {
+      Start-Sleep -Milliseconds 200
+    }'
 }
 # job <id> <worktree> <session-id> <state>: write a job record for it
 job() {
