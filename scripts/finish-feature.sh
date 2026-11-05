@@ -52,6 +52,13 @@ case "$(printf '%s' "${CC_GITFLOW_REGULATOR_PUSH_MERGED:-1}" | tr '[:upper:]' '[
   *) push_merged=1 ;;
 esac
 
+# delete-remote takes two positionals (branch, sha) and no flags: take them
+# here so the flag loop below sees nothing.
+remote_branch=""; remote_sha=""
+if [ "$mode" = "delete-remote" ]; then
+  remote_branch="${1:-}"; remote_sha="${2:-}"; set --
+fi
+
 branch_arg=""; keep_branch=0; kill_stalled=0; stash_changes=0; discard_changes=0
 for a in "$@"; do
   case "$a" in
@@ -66,8 +73,9 @@ done
 [ "$stash_changes$discard_changes" = "11" ] \
   && { echo "error: --stash-changes and --discard-changes are mutually exclusive" >&2; exit 2; }
 
-case "$mode" in plan|finish) ;; *)
+case "$mode" in plan|finish|delete-remote) ;; *)
   echo "usage: finish-feature.sh plan|finish <branch> [--keep-branch] [--stash-changes|--discard-changes]" >&2
+  echo "       finish-feature.sh delete-remote <branch> <sha>" >&2
   exit 2 ;;
 esac
 
@@ -78,6 +86,22 @@ common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
   || fail "not inside a git repository"
 root="${common%/.git}"
 G() { git -C "$root" "$@"; }
+
+# ============================== delete-remote ================================
+# Run only after the user said yes to an `ask: delete-remote <branch> <sha>`
+# line from finish. Deletes origin/<branch>, but only if origin still points
+# at <sha> — the commit finish checked. If anyone pushed to the branch since,
+# git rejects the delete and nothing is lost (--force-with-lease).
+if [ "$mode" = "delete-remote" ]; then
+  [ -n "$remote_branch" ] && [ -n "$remote_sha" ] \
+    || fail "usage: finish-feature.sh delete-remote <branch> <sha>"
+  G remote get-url origin >/dev/null 2>&1 || fail "no origin remote"
+  if G push -q --force-with-lease="refs/heads/$remote_branch:$remote_sha" origin ":refs/heads/$remote_branch" 2>/dev/null; then
+    echo "ok: deleted origin/$remote_branch (it was still at ${remote_sha:0:7})"
+    exit 0
+  fi
+  fail "origin/$remote_branch was not deleted — it moved since finish checked it (someone pushed), or origin is unreachable"
+fi
 
 # --- resolve target branch ---------------------------------------------------
 print_candidates() {
