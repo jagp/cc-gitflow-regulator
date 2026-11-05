@@ -28,7 +28,12 @@ when the work is done. This plugin fixes all three:
   releases the `feature/*` branch so your git client can check it out or merge
   it immediately. Your repo is the remote: **nothing is ever pushed without
   you.**
-- **Finish command** — `/finish-branch` performs the Sourcetree-style
+- **Start command** — `/start-feature <name>` performs the Sourcetree-style
+  "Start Feature": fast-forward develop from origin, branch `feature/<name>`
+  off it, and run the project's test suite as a baseline before you change
+  anything. Bootstraps `develop` from main/master if the repo doesn't have one
+  yet (with your go-ahead).
+- **Finish command** — `/finish-feature` performs the Sourcetree-style
   "Finish Feature" for you: release the worktree lock, `--no-ff` merge into
   develop (PR route on conflicts), and — only with your explicit go-ahead —
   kill the branch's Claude session and delete the branch.
@@ -86,6 +91,36 @@ Keep the key file private (`chmod 600 ~/.claude/ifttt-key.txt` on macOS/Linux).
 When a key is present, each alert sends the repo name, branch name, and alert
 text to IFTTT — nothing else, and nothing at all without a key file.
 
+## Starting a branch: `/start-feature`
+
+```
+/start-feature <feature name> [--create-base] [--skip-tests]
+```
+
+`/new-feature` is an alias.
+
+All git logic lives in `scripts/start-feature.sh` (`plan` is read-only, `start`
+acts). In order, it:
+
+1. Slugs the name into `feature/<name>`. The slug rules are the same as
+   `/feature-dirty`.
+2. Refuses if the branch already exists, locally or on origin.
+3. Refuses if tracked files have uncommitted changes. Use `/feature-dirty`
+   to carry dirty work onto a new branch instead.
+4. Resolves the base branch: `CC_GITFLOW_REGULATOR_BASE`, else
+   `develop`/`dev`. A base that exists only on origin is checked out locally.
+   If there is no base at all, `--create-base` creates `develop` from
+   main/master.
+5. Fetches origin and fast-forwards the base only if it is strictly behind.
+   A base that is ahead or has diverged is reported and never forced.
+6. Creates the branch from the base and switches the current checkout to it.
+7. Detects the test suite and runs it once as a baseline, so failures that
+   were already there aren't mistaken for new ones. Detected runners:
+   package.json `test` script (npm/pnpm/yarn/bun), pytest, cargo, go,
+   `make test`, and bats.
+
+Nothing is pushed.
+
 ## Reviewing and merging Claude's work
 
 When you get the alert, the `feature/<name>` branch is (or will be at session
@@ -94,14 +129,16 @@ end) checked out nowhere — open your git client, review it, and merge it into
 
 Or let the plugin do it:
 
-## Finishing a branch: `/finish-branch`
+## Finishing a branch: `/finish-feature`
 
 ```
-/finish-branch [branch] [--kill-session] [--delete-branch]
+/finish-feature [branch] [--kill-session] [--delete-branch]
 ```
+
+`/finish-branch` is an alias.
 
 Mimics Sourcetree's Gitflow **Finish Feature** button, deterministically
-(all logic lives in `scripts/finish-branch.sh`; the command is a thin
+(all logic lives in `scripts/finish-feature.sh`; the command is a thin
 wrapper). It first shows you a read-only *plan* — resolved branch, base,
 holding worktree, attached Claude session, remote-branch state, and whether
 the merge will be clean — then:
@@ -118,7 +155,7 @@ the merge will be clean — then:
    PR into the base — the only case where anything leaves your machine, and
    it never happens without you having invoked the command. The PR body
    reminds you of the next step: once the PR is merged, run
-   `/finish-branch <branch>` again and it resumes — detects the branch is
+   `/finish-feature <branch>` again and it resumes — detects the branch is
    now contained in the base and performs the remaining cleanup only.
 4. **Optionally** kills the Claude session attached to the worktree and
    deletes its background job (`--kill-session`), and/or removes the worktree

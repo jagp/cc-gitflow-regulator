@@ -4,9 +4,9 @@ argument-hint: "[branch] [--kill-session] [--delete-branch]"
 allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
 ---
 
-# /finish-branch
+# /finish-feature
 
-All logic is deterministic and lives in `scripts/finish-branch.sh` — do not
+All logic is deterministic and lives in `scripts/finish-feature.sh` — do not
 improvise git commands. Your job is only: run the plan, obtain consent for the
 destructive flags, run finish, relay the output.
 
@@ -15,7 +15,7 @@ destructive flags, run finish, relay the output.
 Run:
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-branch.sh" plan $ARGUMENTS
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" plan $ARGUMENTS
 ```
 
 Show the user the plan output verbatim. If it errors (exit 2), stop and report
@@ -43,7 +43,7 @@ Two flags are destructive and default OFF:
 
 For each flag, include it in step 3 only if ONE of these holds:
 
-1. The user passed the flag themselves in the `/finish-branch` invocation —
+1. The user passed the flag themselves in the `/finish-feature` invocation —
    that is the explicit permission signal.
 2. The **immediately preceding** conversation clearly shows the user already
    understands and has approved that exact action (e.g. they just answered a
@@ -60,7 +60,7 @@ the user's signal, not the state of the repo.
 Run (with only the consented flags):
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-branch.sh" finish <branch> [--kill-session] [--delete-branch]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--kill-session] [--delete-branch]
 ```
 
 ## 4. Report
@@ -73,7 +73,7 @@ Relay the script's summary lines. Exit codes:
   (the only path that pushes, and it never happens without the user having
   invoked this command). This is the normal two-step conflict process, not a
   failure: the PR body itself reminds the user that after the PR merges they
-  run `/finish-branch <branch>` again, and the resumed run detects the branch
+  run `/finish-feature <branch>` again, and the resumed run detects the branch
   is contained in the base and performs the remaining cleanup only. Relay the
   PR URL and say exactly that
 - `4` — merged, but cleanup incomplete; report the warnings verbatim. Causes

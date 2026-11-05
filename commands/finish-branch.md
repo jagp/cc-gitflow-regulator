@@ -1,0 +1,10 @@
+---
+description: "Alias of /finish-feature: merge a gitflow branch into develop and clean up."
+argument-hint: "[branch] [--kill-session] [--delete-branch]"
+allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
+---
+
+# /finish-branch
+
+This is an alias. Follow `${CLAUDE_PLUGIN_ROOT}/commands/finish-feature.md`
+exactly, with the arguments `$ARGUMENTS`.

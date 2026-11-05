@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# cc-gitflow-regulator finish-branch — deterministic Sourcetree-style "Finish Feature".
+# cc-gitflow-regulator finish-feature — deterministic Sourcetree-style "Finish Feature".
 #
-# Modes (wired to the /finish-branch command in commands/finish-branch.md):
+# Modes (wired to the /finish-feature command in commands/finish-feature.md):
 #   plan   <branch>   read-only: resolve branch/base/worktree/session and print
 #                     exactly what `finish` would do; makes NO changes (no refs
 #                     created, no fetch)
@@ -54,7 +54,7 @@ for a in "$@"; do
 done
 
 case "$mode" in plan|finish) ;; *)
-  echo "usage: finish-branch.sh plan|finish <branch> [--kill-session] [--delete-branch]" >&2
+  echo "usage: finish-feature.sh plan|finish <branch> [--kill-session] [--delete-branch]" >&2
   exit 2 ;;
 esac
 
@@ -310,7 +310,7 @@ if [ -n "$wt_dir" ]; then
   if [ -n "$(git -C "$wt_dir" status --porcelain 2>/dev/null)" ]; then
     # Dirty means unfinished — except when the branch is already contained in
     # the base and the user consented to --delete-branch: the leftovers go
-    # with the worktree (the /finish-branch consent prompt spells this out).
+    # with the worktree (the /finish-feature consent prompt spells this out).
     if [ "$ahead" != "0" ] || [ "$delete_branch" != "1" ]; then
       fail "worktree $wt_dir has uncommitted changes — the branch is not finished"
     fi
@@ -349,9 +349,9 @@ else
   if G remote get-url origin >/dev/null 2>&1; then
     G push -u origin "$branch" || fail "conflict + push failed — resolve manually"
     if command -v gh >/dev/null 2>&1; then
-      pr_body="Opened by /finish-branch: the local --no-ff merge of \`$branch\` into \`$base\` hit conflicts, so the finish switched to the PR route.
+      pr_body="Opened by /finish-feature: the local --no-ff merge of \`$branch\` into \`$base\` hit conflicts, so the finish switched to the PR route.
 
-**When this PR is merged, the finish is not done yet** — run \`/finish-branch $branch\` again to resume it. The command will detect the branch is now contained in \`$base\` and complete the remaining steps: verify the worktree lock is released, and (with your go-ahead) kill the attached session and delete the branch."
+**When this PR is merged, the finish is not done yet** — run \`/finish-feature $branch\` again to resume it. The command will detect the branch is now contained in \`$base\` and complete the remaining steps: verify the worktree lock is released, and (with your go-ahead) kill the attached session and delete the branch."
       url="$(cd "$root" && gh pr create --base "$base" --head "$branch" \
         --title "Merge $branch into $base" \
         --body "$pr_body" 2>/dev/null)"
@@ -359,7 +359,7 @@ else
     else
       echo "conflict: branch pushed to origin; open a PR into $base manually (gh not installed)"
     fi
-    echo "conflict: branch and worktree left intact — re-run /finish-branch $branch after the PR merges to resume"
+    echo "conflict: branch and worktree left intact — re-run /finish-feature $branch after the PR merges to resume"
   else
     echo "conflict: no remote — resolve the merge manually (branch and worktree left intact)"
   fi
