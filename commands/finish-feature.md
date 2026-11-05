@@ -1,14 +1,14 @@
 ---
-description: "Finish a gitflow branch (Sourcetree-style): merge into develop with --no-ff, release the worktree lock, optionally delete the branch — destructive steps confirmed first."
-argument-hint: "[branch] [--delete-branch] [--stash-changes|--discard-changes]"
+description: "Finish a gitflow branch (Sourcetree-style): merge into develop with --no-ff, release the worktree lock, delete the merged branch (--keep-branch keeps it)."
+argument-hint: "[branch] [--keep-branch] [--stash-changes|--discard-changes]"
 allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
 ---
 
 # /finish-feature
 
 All logic is deterministic and lives in `scripts/finish-feature.sh` — do not
-improvise git commands. Your job is only: run the plan, obtain consent for the
-destructive flags, run finish, relay the output.
+improvise git commands. Your job is only: run the plan, settle any leftovers with
+the user, run finish, relay the output.
 
 ## 1. Plan (read-only)
 
@@ -48,31 +48,19 @@ before merging because it cannot tell what they are. Show the files, then ask
 3. **Discard them** — re-run with `--discard-changes`. Only on an explicit
    choice; never pick this yourself.
 
-## 3. Consent for destructive flags
+## 3. Keeping the branch
 
-One flag is destructive and defaults OFF:
-
-- `--delete-branch` — removes the worktree and deletes the local branch
-
-Include it in step 3 only if ONE of these holds:
-
-1. The user passed the flag themselves in the `/finish-feature` invocation —
-   that is the explicit permission signal.
-2. The **immediately preceding** conversation clearly shows the user already
-   understands and has approved that exact action (e.g. they just answered a
-   permission prompt or question amounting to the same thing). Older or vaguer
-   mentions do not count.
-3. Neither applies → ask now (AskUserQuestion, default No) and include the flag only on an explicit Yes.
-
-Never substitute your own judgment that deletion "seems fine" — the gate is
-the user's signal, not the state of the repo.
+By default finish removes the worktree and deletes the local branch once it
+is merged. Pass `--keep-branch` only when the user asked to keep it (in the
+invocation or the immediately preceding conversation). Never add it on your
+own judgment.
 
 ## 4. Finish
 
-Run (with only the consented flags, plus any leftover flag chosen in step 2):
+Run (with `--keep-branch` only per step 3, plus any leftover flag chosen in step 2):
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--delete-branch] [--stash-changes|--discard-changes]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--keep-branch] [--stash-changes|--discard-changes]
 ```
 
 ## 5. Report

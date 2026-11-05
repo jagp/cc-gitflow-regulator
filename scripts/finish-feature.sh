@@ -5,13 +5,13 @@
 #   plan   <branch>   read-only: resolve branch/base/worktree/session and print
 #                     exactly what `finish` would do; makes NO changes (no refs
 #                     created, no fetch)
-#   finish <branch> [--delete-branch]
+#   finish <branch> [--keep-branch] [--stash-changes|--discard-changes]
 #                     merge <branch> into the gitflow base with --no-ff, then
 #                     push the base to origin (CC_GITFLOW_REGULATOR_PUSH_MERGED=0
 #                     turns that off). On conflict: abort, push the branch and
-#                     open a PR instead. Destructive
-#                     steps are OFF unless their flag is passed:
-#                       --delete-branch  remove the worktree and delete the branch
+#                     open a PR instead. Then the worktree is removed and
+#                     the local branch deleted, unless:
+#                       --keep-branch    keep the worktree and the local branch
 #                     Leftover (uncommitted/untracked) files in the worktree make
 #                     finish refuse before merging, unless one of:
 #                       --stash-changes    stash them (outlives the worktree)
@@ -52,10 +52,10 @@ case "$(printf '%s' "${CC_GITFLOW_REGULATOR_PUSH_MERGED:-1}" | tr '[:upper:]' '[
   *) push_merged=1 ;;
 esac
 
-branch_arg=""; delete_branch=0; stash_changes=0; discard_changes=0
+branch_arg=""; keep_branch=0; stash_changes=0; discard_changes=0
 for a in "$@"; do
   case "$a" in
-    --delete-branch) delete_branch=1 ;;
+    --keep-branch) keep_branch=1 ;;
     --stash-changes) stash_changes=1 ;;
     --discard-changes) discard_changes=1 ;;
     --*) echo "error: unknown flag $a" >&2; exit 2 ;;
@@ -66,7 +66,7 @@ done
   && { echo "error: --stash-changes and --discard-changes are mutually exclusive" >&2; exit 2; }
 
 case "$mode" in plan|finish) ;; *)
-  echo "usage: finish-feature.sh plan|finish <branch> [--delete-branch] [--stash-changes|--discard-changes]" >&2
+  echo "usage: finish-feature.sh plan|finish <branch> [--keep-branch] [--stash-changes|--discard-changes]" >&2
   exit 2 ;;
 esac
 
@@ -313,7 +313,11 @@ if [ "$mode" = "plan" ]; then
       echo "plan: remote        no origin/$branch known locally — finish will fetch --prune to sync"
     fi
   fi
-  echo "plan: delete-branch remove worktree (if any) + git branch -d $branch [requires --delete-branch]"
+  if [ "$keep_branch" = "1" ]; then
+    echo "plan: cleanup       keep worktree and $branch (--keep-branch)"
+  else
+    echo "plan: cleanup       remove worktree (if any) + delete $branch (--keep-branch skips this)"
+  fi
   exit 0
 fi
 
@@ -439,8 +443,8 @@ stop_job() {
   rm -rf "$job_dir"
 }
 
-# Phase 5: delete worktree + branch (opt-in via --delete-branch).
-if [ "$delete_branch" = "1" ]; then
+# Phase 5: delete worktree + branch (default; --keep-branch skips it).
+if [ "$keep_branch" != "1" ]; then
   if [ -n "$wt_dir" ]; then
     keep_wt=0
     if [ "$wt_is_self" = "1" ]; then
@@ -482,7 +486,7 @@ if [ "$delete_branch" = "1" ]; then
     incomplete=1
   fi
 else
-  echo "ok: branch $branch kept (deletion requires --delete-branch)"
+  echo "ok: worktree and branch $branch kept (--keep-branch)"
 fi
 
 # Phase 6: sync remote-tracking refs — report, never touch, the remote branch.

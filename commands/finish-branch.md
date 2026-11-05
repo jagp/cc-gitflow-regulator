@@ -1,6 +1,6 @@
 ---
 description: "Alias of /finish-feature: merge a gitflow branch into develop and clean up."
-argument-hint: "[branch] [--delete-branch] [--stash-changes|--discard-changes]"
+argument-hint: "[branch] [--keep-branch] [--stash-changes|--discard-changes]"
 allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
 ---
 
