@@ -135,58 +135,72 @@ Or let the plugin do it:
 ## Finishing a branch: `/finish-feature`
 
 ```
-/finish-feature [branch] [--kill-session] [--delete-branch]
+/finish-feature [branch] [--keep-branch] [--stash-changes|--discard-changes]
 ```
 
 `/finish-branch` is an alias.
 
 Mimics Sourcetree's Gitflow **Finish Feature** button, deterministically
 (all logic lives in `scripts/finish-feature.sh`; the command is a thin
-wrapper). It first shows you a read-only *plan* — resolved branch, base,
-holding worktree, attached Claude session, remote-branch state, and whether
-the merge will be clean — then:
+wrapper). It first shows you a read-only *plan* (branch, base, holding
+worktree, background job, remote-branch state, whether the merge will be
+clean, and what cleanup will do), then:
 
-1. **Releases the lock** — unlocks and detaches the `.claude/worktrees/*`
+1. **Checks for leftovers** — if the branch's worktree has uncommitted or
+   untracked files (anything in `.claude/` is ignored), it stops *before*
+   merging and lists them. Claude asks what they are: commit them to the
+   branch and re-run, carry them forward with `--stash-changes` (the stash
+   survives the worktree; continue with `/start-feature <name>` then
+   `git stash apply <sha>`), or throw them away with `--discard-changes`.
+2. **Releases the lock** — unlocks and detaches the `.claude/worktrees/*`
    worktree holding the branch (worktrees you created yourself are never
-   touched). Worktrees already sitting on a detached HEAD — the normal state
-   after a session ends, since releasing the branch *is* the delivery — are
-   found by their managed-worktree name instead, so the attached session and
-   folder still get cleaned up.
-2. **Merges** the branch into the base (`develop`/`dev`, or
-   `CC_GITFLOW_REGULATOR_BASE`) with `--no-ff`, gitflow-style.
-3. **On conflict**, switches to the PR route: pushes the branch and opens a
-   PR into the base — the only case where anything leaves your machine, and
-   it never happens without you having invoked the command. The PR body
-   reminds you of the next step: once the PR is merged, run
-   `/finish-feature <branch>` again and it resumes — detects the branch is
-   now contained in the base and performs the remaining cleanup only.
-4. **Optionally** kills the Claude session attached to the worktree and
-   deletes its background job (`--kill-session`), and/or removes the worktree
-   and deletes the branch with `git branch -d`, never `-D`
-   (`--delete-branch`).
-5. **Syncs remote-tracking refs** — `git fetch --prune`, then *reports*
-   whether `origin/<branch>` still exists. Remote branches are never deleted:
-   in a shared repo that's your call, so the script prints the command and
-   leaves it to you.
+   touched). Worktrees already on a detached HEAD, the normal state after a
+   session ends, are found by their managed-worktree name.
+3. **Merges** the branch with `--no-ff` into its base: the one
+   `/start-feature` recorded, else `CC_GITFLOW_REGULATOR_BASE`, else
+   `develop`/`dev`.
+4. **Pushes the base to origin** (plain push, never forced). With no origin
+   it says so; `CC_GITFLOW_REGULATOR_PUSH_MERGED=0` keeps the merge local.
+   A rejected push is reported and the run ends incomplete.
+5. **On conflict**, nothing is merged or pushed to the base. Instead it pushes
+   the feature branch and opens a PR into the base. Once the PR is merged,
+   run `/finish-feature <branch>` again: it sees the branch is already in the
+   base and does the remaining cleanup.
+6. **Cleans up** — removes the worktree and deletes the local branch, unless
+   `--keep-branch`. The branch is deleted only once a long-lived branch
+   (`develop`, `dev`, `main`, `master`, or `CC_GITFLOW_REGULATOR_BASE`) holds
+   its work; a feature merged into a `release/*` or `hotfix/*` base is kept
+   until that base lands, then a re-run deletes it. If the worktree can't be
+   removed, the branch is kept too, so a re-run can find it.
+7. **Asks about origin** — after `git fetch --prune`, if the local branch was
+   deleted and `origin/<branch>` holds nothing beyond it, Claude asks whether
+   to delete it on origin too. On yes, it is deleted only if origin still
+   points at the commit that was checked (`--force-with-lease`), so a push
+   someone made in the meantime is never lost. A branch with someone else's
+   commits on it is left alone.
 
-A branch that exists only on the remote (a background session pushed it
-without ever creating a local branch) is adopted local-first: the plan
-announces it, and finish creates the local branch from `origin/<branch>`
-before merging — no round-trip through the remote required.
+**When a background session holds the worktree.** On Windows a folder can't
+be deleted while any process is running inside it. If removal fails and a
+Claude background job's record matches the worktree, finish looks at the
+job's state: a `done` or `failed` job is stopped (with its child processes)
+and removal is retried; a `blocked` job may be waiting on you, so Claude asks
+first and re-runs with `--kill-stalled-session` on yes; a job in any other
+state is never stopped. Ordinary terminal sessions have no job record, so
+finish names the problem and leaves closing them to you.
 
-Both destructive flags are **off by default**. Claude will ask you before
-using either one unless you passed the flag yourself or just approved the
-same action moments earlier in the conversation — that explicit signal is
-the only thing that enables them.
+A branch that exists only on origin (a background session pushed it without
+ever creating a local branch) is adopted local-first: finish creates the
+local branch from `origin/<branch>` before merging.
+
+**What reaches origin, exactly:** the base branch after a clean merge (unless
+switched off), the feature branch on a conflict (for its PR), and a delete of
+`origin/<branch>` only after you say yes. Never a force push.
 
 Guardrails: it refuses to run if your main checkout has uncommitted tracked
-changes, if the branch's worktree is dirty (the work isn't finished), or if
-the branch is held by a worktree the plugin doesn't manage. It will not kill
-the session it is running in, refuses to kill when more than one job matches
-the worktree (ambiguity is never resolved by guessing), and refuses to remove
-a detached worktree whose HEAD holds commits not yet in the base or the
-branch — `git branch -d` protects a *branch's* commits, and this is the
-equivalent protection for a detached tip.
+changes or a merge in progress, or if the branch is held by a worktree the
+plugin doesn't manage. It never stops the session it is running in, or any
+job when several match the worktree, and it refuses to remove a detached
+worktree whose HEAD holds commits not yet in the base or the branch.
 
 ## License
 
