@@ -12,6 +12,10 @@
 #                     open a PR instead. Destructive
 #                     steps are OFF unless their flag is passed:
 #                       --delete-branch  remove the worktree and delete the branch
+#                     Leftover (uncommitted/untracked) files in the worktree make
+#                     finish refuse before merging, unless one of:
+#                       --stash-changes    stash them (outlives the worktree)
+#                       --discard-changes  let them go with the worktree
 #
 # Branch resolution is local-first: if no local branch matches but an
 # origin/<candidate> does (background sessions publish to origin without ever
@@ -48,17 +52,21 @@ case "$(printf '%s' "${CC_GITFLOW_REGULATOR_PUSH_MERGED:-1}" | tr '[:upper:]' '[
   *) push_merged=1 ;;
 esac
 
-branch_arg=""; delete_branch=0
+branch_arg=""; delete_branch=0; stash_changes=0; discard_changes=0
 for a in "$@"; do
   case "$a" in
     --delete-branch) delete_branch=1 ;;
+    --stash-changes) stash_changes=1 ;;
+    --discard-changes) discard_changes=1 ;;
     --*) echo "error: unknown flag $a" >&2; exit 2 ;;
     *) branch_arg="$a" ;;
   esac
 done
+[ "$stash_changes$discard_changes" = "11" ] \
+  && { echo "error: --stash-changes and --discard-changes are mutually exclusive" >&2; exit 2; }
 
 case "$mode" in plan|finish) ;; *)
-  echo "usage: finish-feature.sh plan|finish <branch> [--delete-branch]" >&2
+  echo "usage: finish-feature.sh plan|finish <branch> [--delete-branch] [--stash-changes|--discard-changes]" >&2
   exit 2 ;;
 esac
 
@@ -261,17 +269,13 @@ if [ "$mode" = "plan" ]; then
   src="default"; [ "$base" = "$recorded_base" ] && src="recorded by /start-feature"
   echo "plan: base          $base ($src)"
   if [ -n "$wt_dir" ]; then
-    st="clean"; [ -n "$(git -C "$wt_dir" status --porcelain 2>/dev/null)" ] && st="DIRTY"
+    st="clean"; [ -n "$(git -C "$wt_dir" status --porcelain -- . ':(exclude).claude' 2>/dev/null)" ] && st="DIRTY"
     lk=""; [ "$wt_locked" = "1" ] && lk=", git-locked"
     att=""; [ "$wt_attached" = "0" ] && att=", DETACHED — matched by managed-worktree name"
     slf=""; [ "$wt_is_self" = "1" ] && slf=" (this session's own worktree)"
     echo "plan: worktree      $wt_dir ($st$lk$att)$slf"
     if [ "$st" = "DIRTY" ]; then
-      if [ "$ahead" = "0" ]; then
-        echo "plan: NOTE          uncommitted worktree changes are NOT in $base — --delete-branch will DISCARD them"
-      else
-        echo "plan: NOTE          worktree is DIRTY — finish will refuse until the work is committed"
-      fi
+      echo "plan: leftovers     uncommitted/untracked files — finish refuses before merging unless --stash-changes or --discard-changes"
     fi
   else
     echo "plan: worktree      none — branch is not checked out anywhere"
@@ -322,20 +326,33 @@ fi
   && fail "main checkout has uncommitted changes — commit or stash them first"
 G rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
   && fail "main checkout has a merge in progress"
-wt_discard=0
+# Leftovers in the worktree (uncommitted or untracked files) are checked
+# BEFORE the merge, so forgotten work can still be committed and merged.
+# The script cannot tell which kind of leftover it is looking at, so it only
+# acts on an explicit flag:
+#   none               -> refuse and list the files (commit them, then re-run)
+#   --stash-changes    -> stash them; the stash lives in the shared repo refs,
+#                         so it outlives the worktree; apply it on a new branch
+#   --discard-changes  -> let them go with the worktree
+# .claude/ is excluded: Claude Code writes local settings there.
 if [ -n "$wt_dir" ]; then
-  if [ -n "$(git -C "$wt_dir" status --porcelain 2>/dev/null)" ]; then
-    # Dirty means unfinished — except when the branch is already contained in
-    # the base and the user consented to --delete-branch: the leftovers go
-    # with the worktree (the /finish-feature consent prompt spells this out).
-    if [ "$ahead" != "0" ] || [ "$delete_branch" != "1" ]; then
-      fail "worktree $wt_dir has uncommitted changes — the branch is not finished"
-    fi
-    wt_discard=1
-    echo "warn: worktree has uncommitted changes — discarding them with the worktree (--delete-branch on an already-merged branch)"
-  fi
   [ "$wt_is_managed" = "1" ] \
     || fail "worktree $wt_dir was not created by Claude — release it yourself, then re-run"
+  leftovers="$(git -C "$wt_dir" status --porcelain -- . ':(exclude).claude' 2>/dev/null)"
+  if [ -n "$leftovers" ]; then
+    if [ "$stash_changes" = "1" ]; then
+      git -C "$wt_dir" stash push -u -q -m "finish-feature: leftovers from $branch" -- . ':(exclude).claude' \
+        || fail "could not stash the leftovers in $wt_dir"
+      stash_sha="$(G rev-parse -q --verify stash@{0})"   # the sha stays valid as other stashes land
+      echo "ok: stashed the worktree's leftovers as $stash_sha — to continue them: /start-feature <name>, then git stash apply $stash_sha"
+    elif [ "$discard_changes" = "1" ]; then
+      echo "warn: discarding the worktree's leftovers (--discard-changes)"
+    else
+      echo "leftover: $wt_dir has uncommitted or untracked files:" >&2
+      printf '%s\n' "$leftovers" | head -20 | sed 's/^/leftover:   /' >&2
+      fail "leftovers in the worktree — commit them to $branch and re-run, or re-run with --stash-changes or --discard-changes"
+    fi
+  fi
 fi
 
 # Phase 2: release the lock — detach the worktree so the branch is free.

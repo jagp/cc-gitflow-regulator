@@ -1,6 +1,6 @@
 ---
 description: "Finish a gitflow branch (Sourcetree-style): merge into develop with --no-ff, release the worktree lock, optionally delete the branch — destructive steps confirmed first."
-argument-hint: "[branch] [--delete-branch]"
+argument-hint: "[branch] [--delete-branch] [--stash-changes|--discard-changes]"
 allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
 ---
 
@@ -33,7 +33,22 @@ Plan lines worth knowing (relay them verbatim like the rest):
 - `plan: session AMBIGUOUS` — multiple background jobs match the worktree;
   finish will not kill any of them
 
-## 2. Consent for destructive flags
+## 2. Leftovers in the worktree
+
+If the plan shows `plan: leftovers` (or finish exits 2 with `leftover:`
+lines), the worktree has uncommitted or untracked files. The script refuses
+before merging because it cannot tell what they are. Show the files, then ask
+(AskUserQuestion) which applies:
+
+1. **Commit them to this branch** — they belong to the feature. Commit them in
+   the worktree, then start again from step 1, so they are merged too.
+2. **Carry them to a new branch** — re-run with `--stash-changes`. Relay the
+   `ok: stashed ...` line: the stash outlives the worktree, and the user picks
+   it up with `/start-feature <name>` then `git stash apply <sha>`.
+3. **Discard them** — re-run with `--discard-changes`. Only on an explicit
+   choice; never pick this yourself.
+
+## 3. Consent for destructive flags
 
 One flag is destructive and defaults OFF:
 
@@ -52,15 +67,15 @@ Include it in step 3 only if ONE of these holds:
 Never substitute your own judgment that deletion "seems fine" — the gate is
 the user's signal, not the state of the repo.
 
-## 3. Finish
+## 4. Finish
 
-Run (with only the consented flags):
+Run (with only the consented flags, plus any leftover flag chosen in step 2):
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--delete-branch]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--delete-branch] [--stash-changes|--discard-changes]
 ```
 
-## 4. Report
+## 5. Report
 
 Relay the script's summary lines. Exit codes:
 
