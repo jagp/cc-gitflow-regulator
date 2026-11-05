@@ -396,7 +396,7 @@ G rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
 if [ -n "$wt_dir" ]; then
   [ "$wt_is_managed" = "1" ] \
     || fail "worktree $wt_dir was not created by Claude — release it yourself, then re-run"
-  leftovers=""
+  leftovers=""; stash_sha=""
   [ "$wt_orphan" = "1" ] || leftovers="$(git -C "$wt_dir" status --porcelain -- . ':(exclude).claude' 2>/dev/null)"
   if [ -n "$leftovers" ]; then
     if [ "$stash_changes" = "1" ]; then
@@ -455,6 +455,7 @@ else
       echo "conflict: branch pushed to origin; open a PR into $base manually (gh not installed)"
     fi
     echo "conflict: branch and worktree left intact — re-run /finish-feature $branch after the PR merges to resume"
+    [ -n "${stash_sha:-}" ] && echo "conflict: the worktree's leftovers are in stash $stash_sha, not in the worktree (git stash apply $stash_sha to bring them back)"
   else
     echo "conflict: no remote — resolve the merge manually (branch and worktree left intact)"
   fi
