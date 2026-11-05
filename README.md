@@ -26,17 +26,17 @@ when the work is done. This plugin fixes all three:
   build any automation on.
 - **Local delivery** — at session end the worktree's HEAD is detached, which
   releases the `feature/*` branch so your git client can check it out or merge
-  it immediately. Your repo is the remote: **nothing is ever pushed without
-  you.**
+  it immediately. The hooks never push anything; only the commands you run
+  talk to origin, as described below.
 - **Start command** — `/start-feature <name>` performs the Sourcetree-style
   "Start Feature": fast-forward develop from origin, branch `feature/<name>`
   off it, and run the project's test suite as a baseline before you change
   anything. Bootstraps `develop` from main/master if the repo doesn't have one
   yet (with your go-ahead).
 - **Finish command** — `/finish-feature` performs the Sourcetree-style
-  "Finish Feature" for you: release the worktree lock, `--no-ff` merge into
-  develop (PR route on conflicts), and — only with your explicit go-ahead —
-  kill the branch's Claude session and delete the branch.
+  "Finish Feature" for you: `--no-ff` merge into the branch's base (PR route
+  on conflicts), push the base to origin, remove the worktree and delete the
+  local branch, then ask before deleting the branch on origin.
 
 ## Requirements
 
