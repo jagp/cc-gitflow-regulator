@@ -529,6 +529,11 @@ stop_job() {
   rm -rf "$job_dir"
 }
 
+# The branch's tip, remembered before Phase 5 may delete it: Phase 6 compares
+# origin's copy against it.
+branch_tip="$(G rev-parse -q --verify "refs/heads/$branch")"
+branch_deleted=0
+
 # Phase 5: delete worktree + branch (default; --keep-branch skips it).
 # Deletion waits until a LONG-LIVED branch holds the work: develop, dev, main,
 # master, or CC_GITFLOW_REGULATOR_BASE. A release/hotfix base is temporary and
@@ -613,6 +618,7 @@ else
   # is the real guard, and it already passed.
   elif G branch -D "$branch" >/dev/null 2>&1; then
     G config --remove-section "gitflow.branch.$branch" 2>/dev/null   # branch -d only clears branch.<name>.*
+    branch_deleted=1
     echo "ok: deleted branch $branch (its work is in $long_lived_holder)"
   else
     echo "warn: could not delete $branch — left in place" >&2
@@ -620,11 +626,25 @@ else
   fi
 fi
 
-# Phase 6: sync remote-tracking refs — report, never touch, the remote branch.
+# Phase 6: the branch on origin. Finish never deletes it itself.
+#   1. fetch --prune so origin/<branch> reflects origin right now
+#   2. local branch deleted AND origin/<branch> holds nothing the deleted
+#      branch lacked -> print `ask: delete-remote <branch> <sha>`; on the
+#      user's yes the command runs the delete-remote mode, which only goes
+#      through if origin is still at <sha>
+#   3. origin has commits the local branch never had -> leave it, say so
+#   4. local branch kept -> leave origin's copy too
 if G remote get-url origin >/dev/null 2>&1; then
   if G fetch --prune --quiet origin 2>/dev/null; then
     if G show-ref --verify -q "refs/remotes/origin/$branch"; then
-      echo "note: origin/$branch still exists on the remote — left alone (finish never deletes remote branches); remove it yourself with: git push origin --delete $branch"
+      remote_tip="$(G rev-parse "refs/remotes/origin/$branch")"
+      if [ "$branch_deleted" = "0" ]; then
+        echo "note: origin/$branch left alone — the local branch was kept too"
+      elif G merge-base --is-ancestor "$remote_tip" "$branch_tip" 2>/dev/null; then
+        echo "ask: delete-remote $branch $remote_tip — origin/$branch holds nothing beyond the merged work; delete it too?"
+      else
+        echo "note: origin/$branch has $(G rev-list --count "$branch_tip..$remote_tip") commit(s) the local branch never had (someone else pushed) — left alone"
+      fi
     else
       echo "ok: origin/$branch is not on the remote — stale tracking refs pruned"
     fi
