@@ -28,8 +28,8 @@ Plan lines worth knowing (relay them verbatim like the rest):
 - `plan: worktree ... DETACHED — matched by managed-worktree name` — the
   branch is not checked out anywhere, but a managed worktree matching it by
   name was found (normal after SessionEnd or for background sessions)
-- `plan: remote` — whether origin/&lt;branch&gt; exists; finish only ever runs
-  `git fetch --prune` and reports — it NEVER deletes remote branches
+- `plan: remote` — whether origin/&lt;branch&gt; exists. Finish never deletes
+  it on its own; at most it asks (step 7)
 - `plan: session AMBIGUOUS` — multiple background jobs match the worktree;
   finish will not kill any of them
 
@@ -103,6 +103,23 @@ Ask the user (AskUserQuestion, default No) whether to stop that job. On an
 explicit Yes, re-run step 4 with the **same flags** plus
 `--kill-stalled-session`. A job in any other state is never stopped.
 
-After any finish, if the output includes a `note:` that origin/&lt;branch&gt;
-still exists on the remote, relay it: deleting remote branches is always the
-user's call (multiplayer-safe), never the script's.
+## 7. The branch on origin
+
+Finish never deletes origin/&lt;branch&gt; by itself. When the local branch was
+deleted and origin's copy holds nothing beyond it, the output includes:
+
+```
+ask: delete-remote <branch> <sha> — ...
+```
+
+Ask the user (AskUserQuestion, default No) whether to delete origin's copy
+too. Only on an explicit Yes, run:
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" delete-remote <branch> <sha>
+```
+
+with the branch and sha exactly as printed. It deletes only if origin is still
+at that sha; if someone pushed in the meantime it refuses (exit 2) — relay
+that and stop. Any `note:` about origin/&lt;branch&gt; (someone else's commits on
+it, or the local branch was kept) is relayed as-is; no question is asked.
