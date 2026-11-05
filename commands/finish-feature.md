@@ -81,10 +81,27 @@ Relay the script's summary lines. Exit codes:
   is contained in the base and performs the remaining cleanup only. Relay the
   PR URL and say exactly that
 - `4` — merged, but cleanup incomplete; report the warnings verbatim. Causes
-  include: the base could not be pushed to origin, branch not deletable, an ambiguous session match (refused to kill),
+  include: the base could not be pushed to origin, branch not deletable, several background jobs matching the worktree (none stopped),
   a detached worktree holding commits not yet in the base (refused to remove —
   they would be lost), or a folder some process still holds (on Windows, any
-  process whose cwd is inside a folder locks it against deletion — EBUSY)
+  process whose cwd is inside a folder locks it against deletion — EBUSY).
+  Whenever the worktree survives, the branch is kept too, so re-running
+  `/finish-feature <branch>` (from the main checkout) finishes the cleanup
+
+## 6. A stalled background job holds the worktree
+
+If removal fails and a background job's record matches the worktree, the
+script acts on the job's state. A `done`/`failed` job is stopped and removal
+retried without asking (`ok: stopped background job ...`). A `blocked` job may
+be waiting on the user, so the script prints instead:
+
+```
+ask: kill-stalled <job-id> (blocked) — ...
+```
+
+Ask the user (AskUserQuestion, default No) whether to stop that job. On an
+explicit Yes, re-run step 4 with the **same flags** plus
+`--kill-stalled-session`. A job in any other state is never stopped.
 
 After any finish, if the output includes a `note:` that origin/&lt;branch&gt;
 still exists on the remote, relay it: deleting remote branches is always the
