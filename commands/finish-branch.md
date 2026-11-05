@@ -1,5 +1,5 @@
 ---
-description: "Alias of /finish-feature: merge a gitflow branch into develop and clean up."
+description: "Alias of /finish-feature: merge a gitflow branch into its base, push the base, and clean up."
 argument-hint: "[branch] [--keep-branch] [--stash-changes|--discard-changes]"
 allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
 ---

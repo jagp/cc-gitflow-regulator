@@ -1,5 +1,5 @@
 ---
-description: "Finish a gitflow branch (Sourcetree-style): merge into develop with --no-ff, release the worktree lock, delete the merged branch (--keep-branch keeps it)."
+description: "Finish a gitflow branch (Sourcetree-style): --no-ff merge into its base, push the base to origin, delete the worktree and local branch (--keep-branch keeps them), then ask before deleting the branch on origin."
 argument-hint: "[branch] [--keep-branch] [--stash-changes|--discard-changes]"
 allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
 ---
@@ -73,9 +73,9 @@ Relay the script's summary lines. Exit codes:
   (or that no origin exists / pushing is switched off), and what was/wasn't
   cleaned up
 - `2` — refused by a preflight guard; report the reason verbatim, fix nothing
-- `3` — merge conflicted; the script already pushed the branch and opened a PR
-  (the only path that pushes, and it never happens without the user having
-  invoked this command). This is the normal two-step conflict process, not a
+- `3` — merge conflicted; nothing was merged and the base was not pushed. The
+  script pushed the feature branch to origin and opened a PR into the base
+  instead. This is the normal two-step conflict process, not a
   failure: the PR body itself reminds the user that after the PR merges they
   run `/finish-feature <branch>` again, and the resumed run detects the branch
   is contained in the base and performs the remaining cleanup only. Relay the
