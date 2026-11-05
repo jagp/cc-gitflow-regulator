@@ -71,5 +71,6 @@ Keep it short:
 - any `ok:` / `warn:` lines (base created, fast-forwarded, diverged)
 - open work branches, if any. They may be duplicates of this idea.
 - baseline test result, or why it was skipped
-- reminder: nothing was pushed. `/finish-feature` merges this branch back into
-  the base when the work is done.
+- reminder: nothing was pushed. When the work is done, `/finish-feature`
+  merges this branch back into its recorded base and pushes that base to
+  origin.
