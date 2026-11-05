@@ -462,10 +462,11 @@ if [ "$keep_branch" = "1" ]; then
 elif [ -z "$long_lived_holder" ]; then
   echo "ok: worktree and branch $branch kept — its work is only in $base, a temporary branch; re-run /finish-feature $branch once $base is merged into develop or main"
 else
+  wt_remaining=0   # 1 when the worktree survives; the branch then stays too (below)
   if [ -n "$wt_dir" ]; then
-    keep_wt=0
+    keep_wt=0; removed=1   # removed is set to 0 only by a failed removal attempt
     if [ "$wt_is_self" = "1" ]; then
-      echo "warn: not removing $wt_dir — this session is running inside it"
+      echo "warn: not removing $wt_dir — this session is running inside it; to finish the cleanup, run /finish-feature $branch from a session in $root"
       incomplete=1; keep_wt=1
     elif [ "$wt_attached" = "0" ]; then
       # A detached worktree may hold committed work that no branch name
@@ -492,12 +493,17 @@ else
         incomplete=1
       fi
     fi
+    [ "$keep_wt" = "1" ] || [ "$removed" = "0" ] && wt_remaining=1
     G worktree prune 2>/dev/null
   fi
+  # A surviving worktree keeps its branch: the re-run that cleans the worktree
+  # up finds it through the branch name.
+  if [ "$wt_remaining" = "1" ]; then
+    echo "ok: branch $branch kept until its worktree is removed — re-run /finish-feature $branch to finish the cleanup"
   # -D, not -d: git's own -d check compares against whatever the main checkout
   # has checked out, not develop/main. The long-lived containment check above
   # is the real guard, and it already passed.
-  if G branch -D "$branch" >/dev/null 2>&1; then
+  elif G branch -D "$branch" >/dev/null 2>&1; then
     G config --remove-section "gitflow.branch.$branch" 2>/dev/null   # branch -d only clears branch.<name>.*
     echo "ok: deleted branch $branch (its work is in $long_lived_holder)"
   else
