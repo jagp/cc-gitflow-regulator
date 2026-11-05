@@ -1,6 +1,6 @@
 ---
 description: "Alias of /finish-feature: merge a gitflow branch into develop and clean up."
-argument-hint: "[branch] [--kill-session] [--delete-branch]"
+argument-hint: "[branch] [--delete-branch]"
 allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
 ---
 

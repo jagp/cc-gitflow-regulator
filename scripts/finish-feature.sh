@@ -5,14 +5,12 @@
 #   plan   <branch>   read-only: resolve branch/base/worktree/session and print
 #                     exactly what `finish` would do; makes NO changes (no refs
 #                     created, no fetch)
-#   finish <branch> [--kill-session] [--delete-branch]
+#   finish <branch> [--delete-branch]
 #                     merge <branch> into the gitflow base with --no-ff, then
 #                     push the base to origin (CC_GITFLOW_REGULATOR_PUSH_MERGED=0
 #                     turns that off). On conflict: abort, push the branch and
 #                     open a PR instead. Destructive
 #                     steps are OFF unless their flag is passed:
-#                       --kill-session   kill the Claude session attached to the
-#                                        branch's worktree and delete its job dir
 #                       --delete-branch  remove the worktree and delete the branch
 #
 # Branch resolution is local-first: if no local branch matches but an
@@ -50,10 +48,9 @@ case "$(printf '%s' "${CC_GITFLOW_REGULATOR_PUSH_MERGED:-1}" | tr '[:upper:]' '[
   *) push_merged=1 ;;
 esac
 
-branch_arg=""; kill_session=0; delete_branch=0
+branch_arg=""; delete_branch=0
 for a in "$@"; do
   case "$a" in
-    --kill-session) kill_session=1 ;;
     --delete-branch) delete_branch=1 ;;
     --*) echo "error: unknown flag $a" >&2; exit 2 ;;
     *) branch_arg="$a" ;;
@@ -61,7 +58,7 @@ for a in "$@"; do
 done
 
 case "$mode" in plan|finish) ;; *)
-  echo "usage: finish-feature.sh plan|finish <branch> [--kill-session] [--delete-branch]" >&2
+  echo "usage: finish-feature.sh plan|finish <branch> [--delete-branch]" >&2
   exit 2 ;;
 esac
 
@@ -280,7 +277,7 @@ if [ "$mode" = "plan" ]; then
     echo "plan: worktree      none — branch is not checked out anywhere"
   fi
   if [ "$job_matches" -gt 1 ]; then
-    echo "plan: session       AMBIGUOUS — jobs matching this worktree:$job_ids — finish will refuse --kill-session"
+    echo "plan: session       AMBIGUOUS — jobs matching this worktree:$job_ids — finish will not kill any of them"
   elif [ -n "$job_dir" ]; then
     slf=""; [ "$job_is_self" = "1" ] && slf=" (this session — will refuse to kill)"
     echo "plan: session       job $(basename "$job_dir"), session $job_session$slf"
@@ -312,7 +309,6 @@ if [ "$mode" = "plan" ]; then
       echo "plan: remote        no origin/$branch known locally — finish will fetch --prune to sync"
     fi
   fi
-  echo "plan: kill-session  $( [ "$job_matches" -gt 1 ] && echo "refuse (ambiguous match)" || { [ -n "$job_dir" ] && echo "kill session process + delete $(basename "$job_dir")" || echo "nothing to do"; } ) [requires --kill-session]"
   echo "plan: delete-branch remove worktree (if any) + git branch -d $branch [requires --delete-branch]"
   exit 0
 fi
@@ -403,36 +399,28 @@ else
   incomplete=1
 fi
 
-# Phase 4: kill the attached session (opt-in via --kill-session).
-if [ "$kill_session" = "1" ] && [ "$job_matches" -gt 1 ]; then
-  echo "warn: multiple jobs match this worktree:$job_ids — ambiguous, refusing to kill; inspect $JOBS_DIR and clean up manually" >&2
-  incomplete=1
-elif [ "$kill_session" = "1" ] && [ -n "$job_dir" ]; then
-  if [ "$job_is_self" = "1" ]; then
-    echo "warn: refusing to kill this session's own job ($(basename "$job_dir")) — end the session normally"
-  else
-    if [ -n "$job_session" ]; then
-      if command -v powershell.exe >/dev/null 2>&1; then
-        SID="$job_session" powershell.exe -NoProfile -Command '
-          Get-CimInstance Win32_Process |
-            Where-Object { $_.CommandLine -match [regex]::Escape($env:SID) -and $_.ProcessId -ne $PID } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }' >/dev/null 2>&1
-      elif command -v pgrep >/dev/null 2>&1; then
-        for p in $(pgrep -f "$job_session" 2>/dev/null); do
-          [ "$p" != "$$" ] && kill "$p" 2>/dev/null
-        done
-      fi
-      sleep 1   # let the OS release the dead processes' cwd handles (Windows EBUSY)
+# stop_job: end the background job whose session holds the worktree.
+#   1. find every process whose command line carries the job's session id
+#      (never this script itself) and stop it
+#   2. pause so Windows releases the folder handles the dead processes held
+#   3. delete the job's record directory
+# Called from the worktree-removal step only (Phase 5), when removal failed.
+stop_job() {
+  if [ -n "$job_session" ]; then
+    if command -v powershell.exe >/dev/null 2>&1; then
+      SID="$job_session" powershell.exe -NoProfile -Command '
+        Get-CimInstance Win32_Process |
+          Where-Object { $_.CommandLine -match [regex]::Escape($env:SID) -and $_.ProcessId -ne $PID } |
+          ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }' >/dev/null 2>&1
+    elif command -v pgrep >/dev/null 2>&1; then
+      for process_id in $(pgrep -f "$job_session" 2>/dev/null); do
+        [ "$process_id" != "$$" ] && kill "$process_id" 2>/dev/null
+      done
     fi
-    rm -rf "$job_dir" && echo "ok: session killed and job $(basename "$job_dir") deleted"
+    sleep 1   # let the OS release the dead processes' cwd handles (Windows EBUSY)
   fi
-elif [ "$kill_session" = "1" ]; then
-  if [ -n "$wt_dir" ]; then
-    echo "warn: no session/job matched $wt_dir — nothing killed; if worktree removal fails below, some process still holds the folder (any process whose cwd is inside locks it on Windows)" >&2
-  else
-    echo "ok: no session/job found for $branch — nothing to kill"
-  fi
-fi
+  rm -rf "$job_dir"
+}
 
 # Phase 5: delete worktree + branch (opt-in via --delete-branch).
 if [ "$delete_branch" = "1" ]; then
@@ -462,7 +450,7 @@ if [ "$delete_branch" = "1" ]; then
         sleep 1   # transient EBUSY: handles can take a beat to release after a kill
       done
       if [ "$removed" = "0" ]; then
-        echo "warn: could not remove worktree $wt_dir — some process is holding it (any process whose cwd is inside locks the folder on Windows); close sessions/terminals there or re-run with --kill-session" >&2
+        echo "warn: could not remove worktree $wt_dir — some process is holding it (any process whose cwd is inside locks the folder on Windows); close sessions/terminals there and re-run" >&2
         incomplete=1
       fi
     fi

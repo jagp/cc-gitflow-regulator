@@ -1,6 +1,6 @@
 ---
-description: "Finish a gitflow branch (Sourcetree-style): merge into develop with --no-ff, release the worktree lock, optionally kill the attached session and delete the branch — destructive steps confirmed first."
-argument-hint: "[branch] [--kill-session] [--delete-branch]"
+description: "Finish a gitflow branch (Sourcetree-style): merge into develop with --no-ff, release the worktree lock, optionally delete the branch — destructive steps confirmed first."
+argument-hint: "[branch] [--delete-branch]"
 allowed-tools: ["Bash(bash:*)", "Bash(git:*)", "Bash(gh:*)"]
 ---
 
@@ -30,18 +30,16 @@ Plan lines worth knowing (relay them verbatim like the rest):
   name was found (normal after SessionEnd or for background sessions)
 - `plan: remote` — whether origin/&lt;branch&gt; exists; finish only ever runs
   `git fetch --prune` and reports — it NEVER deletes remote branches
-- `plan: session AMBIGUOUS` — multiple jobs match; finish will refuse
-  --kill-session rather than guess
+- `plan: session AMBIGUOUS` — multiple background jobs match the worktree;
+  finish will not kill any of them
 
 ## 2. Consent for destructive flags
 
-Two flags are destructive and default OFF:
+One flag is destructive and defaults OFF:
 
-- `--kill-session` — kills the Claude session attached to the branch's
-  worktree and deletes its job directory
 - `--delete-branch` — removes the worktree and deletes the local branch
 
-For each flag, include it in step 3 only if ONE of these holds:
+Include it in step 3 only if ONE of these holds:
 
 1. The user passed the flag themselves in the `/finish-feature` invocation —
    that is the explicit permission signal.
@@ -49,8 +47,7 @@ For each flag, include it in step 3 only if ONE of these holds:
    understands and has approved that exact action (e.g. they just answered a
    permission prompt or question amounting to the same thing). Older or vaguer
    mentions do not count.
-3. Neither applies → ask now (AskUserQuestion, one question per flag, default
-   No) and include the flag only on an explicit Yes.
+3. Neither applies → ask now (AskUserQuestion, default No) and include the flag only on an explicit Yes.
 
 Never substitute your own judgment that deletion "seems fine" — the gate is
 the user's signal, not the state of the repo.
@@ -60,7 +57,7 @@ the user's signal, not the state of the repo.
 Run (with only the consented flags):
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--kill-session] [--delete-branch]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--delete-branch]
 ```
 
 ## 4. Report
