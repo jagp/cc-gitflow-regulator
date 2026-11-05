@@ -52,10 +52,11 @@ case "$(printf '%s' "${CC_GITFLOW_REGULATOR_PUSH_MERGED:-1}" | tr '[:upper:]' '[
   *) push_merged=1 ;;
 esac
 
-branch_arg=""; keep_branch=0; stash_changes=0; discard_changes=0
+branch_arg=""; keep_branch=0; kill_stalled=0; stash_changes=0; discard_changes=0
 for a in "$@"; do
   case "$a" in
     --keep-branch) keep_branch=1 ;;
+    --kill-stalled-session) kill_stalled=1 ;;
     --stash-changes) stash_changes=1 ;;
     --discard-changes) discard_changes=1 ;;
     --*) echo "error: unknown flag $a" >&2; exit 2 ;;
@@ -423,22 +424,53 @@ else
   incomplete=1
 fi
 
+# remove_worktree: delete the worktree folder; 0 once the folder is gone.
+#   Up to three attempts, a second apart (Windows releases handles slowly):
+#   - while git still lists it: `git worktree remove` (then --force)
+#   - once git has dropped it: delete the leftover folder directly. A failed
+#     `git worktree remove` on a held folder still deregisters the worktree
+#     and empties what it can, leaving an unregistered folder git won't touch.
+#     It is safe to delete: preflight confirmed it sits under .claude/worktrees.
+remove_worktree() {
+  local attempt
+  for attempt in 1 2 3; do
+    if G worktree list --porcelain | grep -qxF "worktree $wt_dir"; then
+      G worktree remove "$wt_dir" 2>/dev/null || G worktree remove --force "$wt_dir" 2>/dev/null
+    else
+      rm -rf "$wt_dir" 2>/dev/null
+    fi
+    [ -e "$wt_dir" ] || return 0
+    sleep 1
+  done
+  return 1
+}
+
 # stop_job: end the background job whose session holds the worktree.
 #   1. find every process whose command line carries the job's session id
-#      (never this script itself) and stop it
-#   2. pause so Windows releases the folder handles the dead processes held
-#   3. delete the job's record directory
+#      (never this script itself)
+#   2. add all their descendants: a session's tool shells (and their console
+#      hosts) run inside the worktree but don't carry the session id
+#   3. stop them all, then pause so Windows releases the folder handles
+#   4. delete the job's record directory
 # Called from the worktree-removal step only (Phase 5), when removal failed.
 stop_job() {
   if [ -n "$job_session" ]; then
     if command -v powershell.exe >/dev/null 2>&1; then
       SID="$job_session" powershell.exe -NoProfile -Command '
-        Get-CimInstance Win32_Process |
-          Where-Object { $_.CommandLine -match [regex]::Escape($env:SID) -and $_.ProcessId -ne $PID } |
-          ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }' >/dev/null 2>&1
+        $all = @(Get-CimInstance Win32_Process)
+        $ids = @($all | Where-Object { $_.CommandLine -match [regex]::Escape($env:SID) -and $_.ProcessId -ne $PID } |
+                 ForEach-Object { $_.ProcessId })
+        do {   # walk down the tree until no new children turn up
+          $children = @($all | Where-Object { $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId -and $_.ProcessId -ne $PID } |
+                        ForEach-Object { $_.ProcessId })
+          $ids += $children
+        } while ($children.Count -gt 0)
+        $ids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }' >/dev/null 2>&1
     elif command -v pgrep >/dev/null 2>&1; then
       for process_id in $(pgrep -f "$job_session" 2>/dev/null); do
-        [ "$process_id" != "$$" ] && kill "$process_id" 2>/dev/null
+        [ "$process_id" != "$$" ] || continue
+        pkill -P "$process_id" 2>/dev/null   # its direct children first
+        kill "$process_id" 2>/dev/null
       done
     fi
     sleep 1   # let the OS release the dead processes' cwd handles (Windows EBUSY)
@@ -481,13 +513,38 @@ else
       fi
     fi
     if [ "$keep_wt" = "0" ]; then
-      removed=0
-      for _try in 1 2 3; do
-        if G worktree remove "$wt_dir" 2>/dev/null || G worktree remove --force "$wt_dir" 2>/dev/null; then
-          removed=1; break
+      remove_worktree && removed=1 || removed=0
+      # Removal failed: something holds the folder. If that is a background
+      # job (the only kind of session with a record to match), act on the
+      # job's recorded state:
+      #   done/failed -> it is over but still holds the lock: stop it, retry
+      #   blocked     -> it may be waiting on the user: stop it only with
+      #                  --kill-stalled-session, otherwise ask (ask: line)
+      #   anything else, several matches, or this session -> never stop it
+      if [ "$removed" = "0" ] && [ "$job_matches" = "1" ] && [ "$job_is_self" = "0" ]; then
+        job_state="$(job_field "$job_dir/state.json" state)"
+        job_id="$(basename "$job_dir")"
+        stop_it=0
+        case "$job_state" in
+          done|failed) stop_it=1 ;;
+          blocked)
+            if [ "$kill_stalled" = "1" ]; then stop_it=1
+            else echo "ask: kill-stalled $job_id ($job_state) — background job holds $wt_dir; re-run with the same flags plus --kill-stalled-session to stop it"
+            fi ;;
+          *) echo "warn: background job $job_id ($job_state) holds $wt_dir and may still be working — not stopped" >&2 ;;
+        esac
+        if [ "$stop_it" = "1" ]; then
+          stop_job
+          if remove_worktree; then
+            removed=1
+            echo "ok: stopped background job $job_id ($job_state) that held the worktree, and removed it"
+          else
+            echo "warn: stopped background job $job_id ($job_state), but the folder is still held — something else has it open" >&2
+          fi
         fi
-        sleep 1   # transient EBUSY: handles can take a beat to release after a kill
-      done
+      elif [ "$removed" = "0" ] && [ "$job_matches" -gt 1 ]; then
+        echo "warn: several background jobs match $wt_dir:$job_ids — not stopping any" >&2
+      fi
       if [ "$removed" = "0" ]; then
         echo "warn: could not remove worktree $wt_dir — some process is holding it (any process whose cwd is inside locks the folder on Windows); close sessions/terminals there and re-run" >&2
         incomplete=1
