@@ -4,7 +4,7 @@
 
 # cc-gitflow-regulator
 
-v0.3.0
+v1.0.0
 
 Gitflow guardrails for Claude Code — every worktree flows back through the regulator.
 
@@ -205,6 +205,7 @@ worktree whose HEAD holds commits not yet in the base or the branch.
 ## Tests
 
 ```
+bash tests/hooks.sh
 bash tests/start-feature.sh
 bash tests/finish-feature.sh
 bash tests/stalled-jobs.sh    # Windows only; skips elsewhere
