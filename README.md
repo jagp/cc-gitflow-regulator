@@ -36,6 +36,11 @@ when the work is done. This plugin fixes all three:
   "Finish Feature" for you: `--no-ff` merge into the branch's base (PR route
   on conflicts), push the base to origin, remove the worktree and delete the
   local branch, then ask before deleting the branch on origin.
+- **Release and hotfix commands** — `/start-release` / `/finish-release` and
+  `/start-hotfix` / `/finish-hotfix` cut and land releases: version suggested
+  from your commits, manifests bumped, changelog drafted and dated, `--no-ff`
+  merges into `main` and back, a tag, and (after you agree) the tag pushed
+  and a GitHub Release page created. See [Releases and hotfixes](#releases-and-hotfixes).
 
 ## Requirements
 
@@ -74,7 +79,9 @@ All optional, via environment variables (e.g. the `"env"` block in
 | ------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `CC_GITFLOW_REGULATOR_PREFIX`         | `feature/`                | Branch prefix for renamed worktree branches                                                                                                      |
 | `CC_GITFLOW_REGULATOR_BASE`           | auto                      | Base branch to fork from. Auto-detect order: `develop`, `dev`, `origin/develop`, `origin/dev`. If none exist, worktrees keep their default base. |
-| `CC_GITFLOW_REGULATOR_PUSH_MERGED`    | on                        | `/finish-feature` pushes the base branch to origin after merging. Set `0` (or `false`/`off`/`no`) to keep merges local.                          |
+| `CC_GITFLOW_REGULATOR_PUSH_MERGED`    | on                        | `/finish-feature` and `/finish-release` push the merged branches to origin after merging. Set `0` (or `false`/`off`/`no`) to keep merges local.                          |
+| `CC_GITFLOW_REGULATOR_CHANGELOG`      | on                        | Release commands draft, require and date a `CHANGELOG.md` entry. `0` turns that off; release notes then come from the commit list.            |
+| `CC_GITFLOW_REGULATOR_GH_RELEASE`     | on                        | Publishing a release also creates its GitHub Release page with `gh`. `0` turns that off.                                                        |
 
 ## Starting a branch: `/start-feature`
 
@@ -186,12 +193,76 @@ plugin doesn't manage. It never stops the session it is running in, or any
 job when several match the worktree, and it refuses to remove a detached
 worktree whose HEAD holds commits not yet in the base or the branch.
 
+## Releases and hotfixes
+
+`/start-release` (alias `/new-release`) and `/finish-release` cut and land a
+release; `/start-hotfix` (alias `/new-hotfix`) and `/finish-hotfix` do the
+same for an urgent fix to what is already released. Same rules as the
+feature commands: a read-only plan first, nothing pushed without saying so,
+and the tag pushed only after you agree.
+
+**Starting.** `/start-release` without a version suggests one from the
+[Conventional Commits](https://www.conventionalcommits.org/) since the last
+`vX.Y.Z` tag, and lists the commits behind it:
+
+| Commits since the last release | From 1.0 on | Below 1.0 |
+| ------------------------------ | ----------- | --------- |
+| a breaking change (`feat!:`, or a `BREAKING CHANGE:` footer) | major | minor |
+| a `feat:`                       | minor       | minor     |
+| only `fix:`, `docs:`, ...       | patch       | patch     |
+
+It never suggests 1.0.0: leaving 0.x is your call, made by naming the version
+(`/start-release 1.0.0`). It refuses while another release is open or the tag
+exists. Then it creates `release/<version>` from `develop`, bumps the version
+in `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` and
+`package.json`, drafts a `CHANGELOG.md` entry from the commits for you to
+edit, commits that, and runs the tests as a baseline. A hotfix branches from
+`main` instead, always takes the next patch, and may start while a release
+is open.
+
+**Finishing.** `/finish-release` refuses on uncommitted changes, failing
+tests, a missing changelog entry, or a manifest at another version. It warns
+(without blocking) about files still naming the previous version, changed
+files no test change mentions, and commits that are on `main` but not
+`develop`. Then it dates the entry, merges into `main` with `--no-ff`, tags
+`v<version>`, merges the tag back into `develop`, pushes both branches,
+deletes the release branch, and cleans up feature branches that were waiting
+for it. A hotfix is merged back into an open release branch if there is one,
+so the release can't ship without the fix.
+
+A conflict stops the run and changes nothing half-way. Resolve it (for a
+conflict with `main`, the command offers to merge `main` into the release
+branch so you can resolve it there) and run the command again; every step
+that already happened is skipped.
+
+**Publishing.** The command then asks before pushing the tag. On yes it
+pushes it, creates the GitHub Release page with the changelog entry as notes
+(`gh` needed; without it you get the exact command to run), and prints the
+commands to undo the release. If the repo has a `RELEASING.md` with a
+`## Notify` list, those places are printed with an announcement to paste.
+Nothing is sent anywhere.
+
+Per-repo switches (git config) mirror the variables above:
+`gitflow.release.changelog false`, `gitflow.release.githubRelease false`,
+`gitflow.release.pushMerged false`.
+
+**Tests.** The commands find a project's tests on their own: `npm`/`pnpm`/
+`yarn`/`bun` `test` scripts, pytest, `cargo test`, `go test`, a Makefile
+`test` target, `*.bats` files, and plain `*.sh` suites in `tests/` or
+`test/` (helpers other suites `source` are skipped). For anything else, set
+`git config gitflow.testCommand "<command>"`. With no tests found, the
+commands warn and carry on.
+
 ## Tests
 
 ```
+bash scripts/run-tests.sh     # all of them
 bash tests/hooks.sh
+bash tests/common.sh
 bash tests/start-feature.sh
 bash tests/finish-feature.sh
+bash tests/start-release.sh
+bash tests/finish-release.sh
 bash tests/stalled-jobs.sh    # Windows only; skips elsewhere
 ```
 
