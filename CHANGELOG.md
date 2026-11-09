@@ -44,3 +44,6 @@ First release intended for distribution.
   out). Passing it is an error.
 - `--kill-session`: replaced by the automatic handling of stalled background
   jobs above.
+- The IFTTT webhook from the `notify` hook, with its
+  `CC_GITFLOW_REGULATOR_IFTTT_EVENT` and `CC_GITFLOW_REGULATOR_IFTTT_KEY_FILE`
+  settings. Completion alerts are desktop notifications only.

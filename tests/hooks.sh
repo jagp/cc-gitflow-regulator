@@ -4,11 +4,9 @@
 # Run from anywhere: bash tests/hooks.sh
 #
 # Side effects are fenced off:
-#   - IFTTT: the key setting points at a missing file, so no webhook fires
 #   - desktop alerts: fake powershell.exe / osascript / notify-send scripts sit
 #     first on PATH and append their arguments to $SCRATCH/alerts instead
 source "$(dirname "$0")/lib.sh"
-export CC_GITFLOW_REGULATOR_IFTTT_KEY_FILE="$SCRATCH/no-ifttt-key"
 mkdir -p "$SCRATCH/fakebin"
 for tool in powershell.exe osascript notify-send; do
   printf '#!/usr/bin/env bash\necho "%s" >> "%s/alerts"\n' "$tool" "$SCRATCH" > "$SCRATCH/fakebin/$tool"
