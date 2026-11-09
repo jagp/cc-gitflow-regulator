@@ -53,17 +53,11 @@ case "$mode" in plan|start) ;; *)
   exit 2 ;;
 esac
 
-fail() { echo "error: $*" >&2; exit 2; }
-
 # --- repo roots ---------------------------------------------------------------
-# root: the main clone (shared refs live there, even when invoked in a worktree)
-# here: the checkout we are standing in; the new branch is switched to HERE
-common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
-  || fail "not inside a git repository"
-root="${common%/.git}"
-here="$(git rev-parse --show-toplevel)"
-G() { git -C "$root" "$@"; }
-has_ref() { G show-ref --verify -q "$1"; }
+# common.sh sets root (the main clone: shared refs live there, even when invoked
+# in a worktree) and here (the checkout we are standing in; the new branch is
+# switched to HERE), and provides fail / G / has_ref / detect_tests.
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 # --- 1. branch name ------------------------------------------------------------
 # Lowercase, drop a prefix the user typed themselves (feature/x -> x), then
@@ -199,35 +193,7 @@ else
 fi
 
 # --- 7. test suite detection ----------------------------------------------------------------
-# Report every recognized runner; the caller runs the first as a baseline.
-# Order is roughly "most specific signal first".
-found=0
-emit() { echo "test: $1   (from $2)"; found=1; }
-pkg="$here/package.json"
-if [ -f "$pkg" ] && grep -Eq '"test"[[:space:]]*:' "$pkg" && ! grep -q 'no test specified' "$pkg"; then
-  runner=npm                                                   # `run test` works for all four runners
-  [ -f "$here/pnpm-lock.yaml" ] && runner=pnpm
-  [ -f "$here/yarn.lock" ] && runner=yarn
-  { [ -f "$here/bun.lockb" ] || [ -f "$here/bun.lock" ]; } && runner=bun
-  emit "$runner run test" "package.json scripts.test"
-fi
-if [ -f "$here/pytest.ini" ] || [ -f "$here/conftest.py" ] \
-   || grep -qs '^\[tool\.pytest' "$here/pyproject.toml" \
-   || grep -qs '^\[tool:pytest\]' "$here/setup.cfg" \
-   || grep -qs '^\[pytest\]' "$here/tox.ini"; then
-  emit "pytest" "pytest config"
-fi
-[ -f "$here/Cargo.toml" ] && emit "cargo test" "Cargo.toml"
-[ -f "$here/go.mod" ] && emit "go test ./..." "go.mod"
-grep -qs '^test:' "$here/Makefile" && emit "make test" "Makefile test target"
-for d in tests test; do
-  if ls "$here/$d"/*.bats >/dev/null 2>&1; then emit "bats $d" "$d/*.bats"; fi
-done
-if [ "$found" = "0" ]; then
-  if [ -d "$here/tests" ] || [ -d "$here/test" ]; then
-    echo "test: a tests/ or test/ folder exists but no recognized runner — inspect it manually"
-  else
-    echo "test: none found"
-  fi
-fi
+# Report every recognized runner (common.sh detect_tests); the caller runs the
+# first as a baseline.
+detect_tests "$here"
 exit 0

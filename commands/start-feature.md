@@ -56,7 +56,8 @@ The script's `test:` lines name the test runner(s) it found.
 - If the user passed `--skip-tests`, or the output is `test: none found`, skip
   this step and say so in the report.
 - Otherwise run the **first** `test:` command from the repo root, before any
-  changes are made.
+  changes are made. Plain shell-script suites (`tests/*.sh`) show up as a
+  `run-tests.sh` command, which runs each suite and names the ones that fail.
 - Record the result as the baseline:
   - pass: say so
   - fail: list the failing tests. These failures predate the feature, so
