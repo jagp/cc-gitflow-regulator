@@ -22,8 +22,7 @@ when the work is done. This plugin fixes all three:
   branch (`develop` by default), never whatever you happened to have checked out.
 - **Completion alerts** — when new committed work exists, you get a desktop
   notification (Windows toast / macOS Notification Center / Linux
-  `notify-send`) and, optionally, an [IFTTT](https://ifttt.com) webhook you can
-  build any automation on.
+  `notify-send`).
 - **Local delivery** — at session end the worktree's HEAD is detached, which
   releases the `feature/*` branch so your git client can check it out or merge
   it immediately. The hooks never push anything; only the commands you run
@@ -59,7 +58,7 @@ when the work is done. This plugin fixes all three:
 | Hook   | Event                            | What it does                                                                                                                                                                                                                |
 | ------ | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | rename | `PostToolUse` on `EnterWorktree` | Renames `worktree-<name>` → `feature/<name>`. If the branch is _fresh_ (a single `branch: Created from ...` reflog entry), hard-resets it onto the base branch first. Worktrees that already carry commits are never reset. |
-| notify | `Stop` (async)                   | If the worktree is clean and HEAD moved since the last alert, sends the desktop notification + IFTTT webhook. Deduped by commit SHA — one alert per batch of new work, not per turn.                                        |
+| notify | `Stop` (async)                   | If the worktree is clean and HEAD moved since the last alert, sends the desktop notification. Deduped by commit SHA — one alert per batch of new work, not per turn.                                        |
 | end    | `SessionEnd`                     | Sends any pending alert, then detaches the worktree HEAD (releases the branch) so it is free in your main checkout.                                                                                                         |
 
 Everything is scoped to directories under `.claude/worktrees/` — the hooks
@@ -76,21 +75,6 @@ All optional, via environment variables (e.g. the `"env"` block in
 | `CC_GITFLOW_REGULATOR_PREFIX`         | `feature/`                | Branch prefix for renamed worktree branches                                                                                                      |
 | `CC_GITFLOW_REGULATOR_BASE`           | auto                      | Base branch to fork from. Auto-detect order: `develop`, `dev`, `origin/develop`, `origin/dev`. If none exist, worktrees keep their default base. |
 | `CC_GITFLOW_REGULATOR_PUSH_MERGED`    | on                        | `/finish-feature` pushes the base branch to origin after merging. Set `0` (or `false`/`off`/`no`) to keep merges local.                          |
-| `CC_GITFLOW_REGULATOR_IFTTT_EVENT`    | `claude_work_done`        | IFTTT Maker Webhooks event name                                                                                                                  |
-| `CC_GITFLOW_REGULATOR_IFTTT_KEY_FILE` | `~/.claude/ifttt-key.txt` | Where your IFTTT Maker key lives                                                                                                                 |
-
-### IFTTT setup (optional)
-
-1. Get your key at [ifttt.com/maker_webhooks](https://ifttt.com/maker_webhooks) → Documentation.
-2. Paste it into `~/.claude/ifttt-key.txt`.
-3. Create an applet triggered by Webhooks event `claude_work_done`.
-   Ingredients: `value1` = repo name, `value2` = branch, `value3` = detail text.
-
-No key file → the webhook is silently skipped.
-
-Keep the key file private (`chmod 600 ~/.claude/ifttt-key.txt` on macOS/Linux).
-When a key is present, each alert sends the repo name, branch name, and alert
-text to IFTTT — nothing else, and nothing at all without a key file.
 
 ## Starting a branch: `/start-feature`
 
