@@ -44,6 +44,52 @@ integration="$(integration_branch)"; production="$(production_branch)"
 has_origin=0; G remote get-url origin >/dev/null 2>&1 && has_origin=1
 incomplete=0
 
+# ============================== publish =======================================================
+# Runs after finish, once the user said yes to `ask: push-tag`. The branch is
+# gone by now, so the release is found by its tag: the newest vX.Y.Z on the
+# production branch.
+#   1. push the tag
+#   2. create the GitHub Release page (unless switched off); a missing or
+#      failing gh is a warning with the exact command, never a failure
+#   3. print the commands that would undo this release
+#   4. print the notify list from RELEASING.md ("## Notify" bullets) and an
+#      announcement to paste into each place. Nothing is sent.
+if [ "$mode" = publish ]; then
+  [ "$has_origin" = 1 ] || fail "no origin remote — nothing to publish to"
+  tag="$(last_release_tag "$production")"
+  [ -n "$tag" ] || fail "no vX.Y.Z tag on $production — run finish first"
+  version="${tag#v}"; previous_tag="$(last_release_tag "$tag^")"
+  G push -q origin "refs/tags/$tag" || fail "could not push $tag to origin"
+  echo "ok: pushed $tag to origin"
+  notes="$(release_notes "$version" "$tag" "${previous_tag:+$previous_tag..}$tag")"
+  if switch_on CC_GITFLOW_REGULATOR_GH_RELEASE gitflow.release.githubRelease; then
+    notes_file="$(mktemp)"; printf '%s\n' "$notes" > "$notes_file"
+    if command -v gh >/dev/null 2>&1 \
+       && (cd "$root" && gh release create "$tag" --title "$tag" --notes-file "$notes_file") >/dev/null 2>&1; then
+      echo "ok: created the GitHub Release $tag"
+    else
+      echo "warn: GitHub Release not created (gh missing, not logged in, or it failed) — run: gh release create $tag --title $tag --notes-from-tag"
+    fi
+    rm -f "$notes_file"
+  else
+    echo "ok: GitHub Release skipped (switched off)"
+  fi
+  production_merge="$(G rev-parse --short "$tag^{commit}")"
+  echo "rollback: gh release delete $tag"
+  echo "rollback: git push origin :refs/tags/$tag"
+  echo "rollback: git tag -d $tag"
+  echo "rollback: git revert -m 1 $production_merge   (on $production, then push it)"
+  notify_list="$(awk '/^## Notify/ { inside = 1; next } inside && /^## / { exit } inside && /^- / { print substr($0, 3) }' "$root/RELEASING.md" 2>/dev/null | tr -d '\r')"
+  if [ -n "$notify_list" ]; then
+    printf '%s\n' "$notify_list" | sed 's/^/notify: /'
+    echo "announce: $(basename "$root") $tag is out"
+    printf '%s\n' "$notes" | sed 's/^/announce: /'
+  else
+    echo "note: no RELEASING.md \"## Notify\" list — add one to be reminded where to announce releases"
+  fi
+  exit 0
+fi
+
 # --- the branch being finished --------------------------------------------------------------
 # Exactly one local <type>/* branch; its name carries the version.
 open_branches="$(G for-each-ref --format='%(refname:short)' "refs/heads/$branch_type/")"
@@ -120,11 +166,6 @@ if [ "$mode" = sync-main ]; then
   conflicted_files "$here"
   echo "next: resolve these files on $branch, commit, then run finish again"
   exit 3
-fi
-
-# ============================== publish =======================================================
-if [ "$mode" = publish ]; then
-  fail "publish is not available yet"
 fi
 
 # ============================== checks ========================================================

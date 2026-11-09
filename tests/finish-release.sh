@@ -103,4 +103,50 @@ release_repo; startr hotfix start >/dev/null 2>&1; edit fix.txt fixed "fix: the 
 finr hotfix finish >/dev/null 2>&1
 check "with no release open, the fix goes into develop" 'git merge-base --is-ancestor v0.3.2 develop'
 
+# --- publish ---------------------------------------------------------------------------------
+# A stand-in gh: logs its arguments and the notes file, exits $GH_STUB_EXIT.
+mkdir -p "$SCRATCH/fakebin"
+cat > "$SCRATCH/fakebin/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "gh $*" >> "$SCRATCH_LOG"
+while [ $# -gt 0 ]; do [ "$1" = --notes-file ] && cat "$2" >> "$SCRATCH_LOG"; shift; done
+exit "${GH_STUB_EXIT:-0}"
+STUB
+chmod +x "$SCRATCH/fakebin/gh"
+export PATH="$SCRATCH/fakebin:$PATH" SCRATCH_LOG="$SCRATCH/gh.log"
+# landed: opened, the entry hand-written, then finished (tag local, not pushed).
+landed() { opened; printf '# Changelog
+
+## 0.4.0 — unreleased
+
+- hand written
+' > CHANGELOG.md
+  git commit -q -am "docs: entry"; finr release finish >/dev/null 2>&1; rm -f "$SCRATCH_LOG"; }
+
+landed; printf '# Releasing
+
+## Notify
+
+- the team wiki
+- an email to ops
+' > RELEASING.md
+out="$(finr release publish 2>&1)"
+check "publish pushes the tag" 'echo "$out" | grep -q exit=0 && git ls-remote --exit-code --tags origin v0.4.0 >/dev/null'
+check "publish creates the GitHub Release from the changelog entry"   'grep -q "^gh release create v0.4.0 --title v0.4.0" "$SCRATCH_LOG" && grep -q "hand written" "$SCRATCH_LOG"'
+check "publish prints the rollback commands" 'echo "$out" | grep -q "rollback: git push origin :refs/tags/v0.4.0"'
+check "publish prints the notify list and an announcement"   'echo "$out" | grep -q "^notify: the team wiki" && echo "$out" | grep -q "^notify: an email to ops" && echo "$out" | grep -q "^announce: .* v0.4.0"'
+landed
+check "no RELEASING.md: a note says where to add the list" 'finr release publish 2>&1 | grep -q "no RELEASING.md"'
+landed; CC_GITFLOW_REGULATOR_GH_RELEASE=0 finr release publish >/dev/null 2>&1
+check "GitHub Release off by env" '[ ! -e "$SCRATCH_LOG" ] && git ls-remote --exit-code --tags origin v0.4.0 >/dev/null'
+landed; git config gitflow.release.githubRelease false; finr release publish >/dev/null 2>&1
+check "GitHub Release off by git config" '[ ! -e "$SCRATCH_LOG" ]'
+landed; out="$(GH_STUB_EXIT=1 finr release publish 2>&1)"
+check "gh failing warns with the command to run, release still ok"   'echo "$out" | grep -q exit=0 && echo "$out" | grep -q "warn: GitHub Release not created" && echo "$out" | grep -q "gh release create v0.4.0"'
+opened; export CC_GITFLOW_REGULATOR_CHANGELOG=0; finr release finish >/dev/null 2>&1; rm -f "$SCRATCH_LOG"
+finr release publish >/dev/null 2>&1; unset CC_GITFLOW_REGULATOR_CHANGELOG
+check "changelog off: release notes come from the commits" 'grep -q "^- a new thing" "$SCRATCH_LOG"'
+landed; git remote remove origin
+check "publish without origin refuses" 'finr release publish 2>&1 | grep -q exit=2'
+
 echo "$failures failure(s)"; [ "$failures" = 0 ]
