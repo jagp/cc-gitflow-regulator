@@ -6,8 +6,6 @@
 source "$(dirname "$0")/lib.sh"
 # rlib <function> [args...]: call a release-lib.sh function in a subshell.
 rlib() { ( source "$REPO/scripts/common.sh" && source "$REPO/scripts/release-lib.sh" && "$@" ); }
-# commit <message>: an empty commit on the current branch with that message.
-commit() { git commit -q --allow-empty -m "$1"; }
 # suggest_from <tag>: classify <tag>..HEAD and print the suggested version.
 suggest_from() { rlib eval "classify_commits $1..HEAD && suggest_version ${1#v}"; }
 
@@ -54,17 +52,6 @@ check "a given version that matches the commits is not flagged" \
   '! rlib eval "classify_commits v0.3.1..HEAD && understates 0.3.1 0.4.0"'
 
 # --- start-release.sh ------------------------------------------------------------------------
-# release_repo: main and develop at a released 0.3.1 (tag, both manifests, a
-# changelog), plus one feat commit on develop, so the suggestion is 0.4.0.
-release_repo() {
-  fresh; mkdir .claude-plugin
-  printf '{\n  "name": "x",\n  "version": "0.3.1"\n}\n' > .claude-plugin/plugin.json
-  printf '{\n  "plugins": [\n    {\n      "name": "x",\n      "version": "0.3.1"\n    }\n  ]\n}\n' > .claude-plugin/marketplace.json
-  printf '# Changelog\n\n## 0.3.1 — 2026-01-01\n\n- old\n' > CHANGELOG.md
-  git add . && git commit -q -m "chore: release 0.3.1" && git tag v0.3.1 && git push -q origin main v0.3.1
-  git switch -q develop && git merge -q --ff-only main && commit "feat: a new thing" && git push -q origin develop
-}
-startr() { bash "$REPO/scripts/start-release.sh" "$@"; echo "exit=$?"; }
 
 release_repo; before="$(git rev-parse HEAD)"
 out="$(startr release plan 2>&1)"

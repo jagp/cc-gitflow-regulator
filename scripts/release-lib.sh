@@ -11,6 +11,21 @@
 
 VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+$'
 valid_version() { [[ "$1" =~ $VERSION_PATTERN ]]; }
+# version_regex <X.Y.Z>: the version with its dots escaped, for grep -E / sed -E
+# (an unescaped dot would match any character).
+version_regex() { printf '%s' "$1" | sed 's/\./\\./g'; }
+
+# replace_in_matching_lines <file> <regex> <old> <new>: in every line matching
+# the bash regex, replace the first <old> with <new>. Pure bash on purpose:
+# `read -r` keeps a CRLF line's \r, where Git Bash's sed and awk drop it
+# (and macOS sed has no plain `-i`).
+replace_in_matching_lines() {
+  local file="$1" pattern="$2" old="$3" new="$4" line
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ $pattern ]] && line="${line/"$old"/"$new"}"
+    printf '%s\n' "$line"
+  done < "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
 
 # last_release_tag: the last release, as a tag shaped exactly vX.Y.Z.
 #   git describe finds the nearest tag matching a loose glob; anything it
@@ -107,22 +122,24 @@ bump_manifests() {
   local new_version="$1" old_version manifest old_pattern
   old_version="$(current_manifest_version)"
   [ -n "$old_version" ] && [ "$old_version" != "$new_version" ] || return 0
-  old_pattern="${old_version//./\.}"
+  old_pattern="$(version_regex "$old_version")"
   for manifest in $MANIFESTS; do
     [ -f "$root/$manifest" ] || continue
     grep -qE "\"version\"[[:space:]]*:[[:space:]]*\"$old_pattern\"" "$root/$manifest" || continue
-    sed -i -E "s/(\"version\"[[:space:]]*:[[:space:]]*\")$old_pattern\"/\1$new_version\"/" "$root/$manifest"
+    replace_in_matching_lines "$root/$manifest" "\"version\"[[:space:]]*:[[:space:]]*\"$old_pattern\"" \
+      "\"$old_version\"" "\"$new_version\""
     echo "ok: $manifest $old_version -> $new_version"
   done
 }
 
-# manifests_not_at <version>: the manifests that do NOT declare <version>, one per
-# line (empty output = all agree). Used by finish as a refusal.
+# manifests_not_at <version> <ref>: the manifests on <ref> that do NOT declare
+# <version>, one per line (empty output = all agree). Read straight from git,
+# so finish's plan can check a branch without checking it out.
 manifests_not_at() {
   local manifest declared
   for manifest in $MANIFESTS; do
-    [ -f "$root/$manifest" ] || continue
-    declared="$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$root/$manifest")"
+    G cat-file -e "$2:$manifest" 2>/dev/null || continue
+    declared="$(G show "$2:$manifest" | sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
     [ -z "$declared" ] && continue
     printf '%s\n' "$declared" | grep -qvxF "$1" && echo "$manifest"
   done
@@ -133,9 +150,65 @@ manifests_not_at() {
 CHANGELOG_FILE="CHANGELOG.md"
 changelog_enabled() { switch_on CC_GITFLOW_REGULATOR_CHANGELOG gitflow.release.changelog; }
 
-# changelog_has_entry: is there a "## <version>" heading (any suffix, CRLF ok)?
+# changelog_content [ref]: the changelog's text — from <ref> when given (no
+# checkout needed), else from the working tree. Prints nothing if absent.
+changelog_content() {
+  if [ -n "${1:-}" ]; then G show "$1:$CHANGELOG_FILE" 2>/dev/null
+  else cat "$root/$CHANGELOG_FILE" 2>/dev/null; fi
+}
+
+# changelog_has_entry <version> [ref]: is there a "## <version>" heading?
+# Anything may follow after a space; a CRLF line ending is fine.
+CARRIAGE_RETURN=$'\r'
 changelog_has_entry() {
-  [ -f "$root/$CHANGELOG_FILE" ] && grep -qE "^## ${1//./\.}( |$|"$'\r'")" "$root/$CHANGELOG_FILE"
+  local escaped_version; escaped_version="$(version_regex "$1")"
+  changelog_content "${2:-}" | grep -qE "^## ${escaped_version}( |\$|${CARRIAGE_RETURN})"
+}
+
+# changelog_entry_text <version> [ref]: the entry's lines without its heading,
+# up to the next "## " heading; \r stripped, outer blank lines trimmed.
+changelog_entry_text() {
+  changelog_content "${2:-}" | tr -d '\r' | HEADING_PATTERN="^## $(version_regex "$1")( |$)" awk '
+    $0 ~ ENVIRON["HEADING_PATTERN"] { inside = 1; next }
+    inside && /^## / { exit }
+    inside { lines[++count] = $0 }
+    END { first = 1; while (first <= count && lines[first] == "") first++
+          last = count; while (last >= first && lines[last] == "") last--
+          for (line = first; line <= last; line++) print lines[line] }'
+}
+
+# changelog_set_date <version>: "## <version> — unreleased" becomes
+# "## <version> — <today>" in the working tree, keeping a \r line ending.
+# An entry that already carries a date is left exactly as it is.
+changelog_set_date() {
+  local file="$root/$CHANGELOG_FILE"
+  local escaped_version; escaped_version="$(version_regex "$1")"
+  # Only touch the file when there is something to change: rewriting it
+  # anyway can change its line endings and leave it looking modified.
+  grep -qE "^## $escaped_version — unreleased${CARRIAGE_RETURN}?\$" "$file" 2>/dev/null || return 0
+  replace_in_matching_lines "$file" "^## $escaped_version — unreleased${CARRIAGE_RETURN}?\$" unreleased "$(date +%F)"
+}
+
+# changelog_fill_empty <version> <range>: an entry with no "- " bullets yet
+# (a hotfix's bare heading) gets changelog_sections for <range> under it.
+changelog_fill_empty() {
+  local version="$1" file="$root/$CHANGELOG_FILE" sections
+  changelog_entry_text "$version" | grep -q '^- ' && return 0
+  classify_commits "$2"; sections="$(changelog_sections)"
+  [ -n "$sections" ] || return 0
+  HEADING_PATTERN="^## $(version_regex "$version")( |$)" SECTIONS="$sections" awk '
+    !done && $0 ~ ENVIRON["HEADING_PATTERN"] { print; print ""; print ENVIRON["SECTIONS"]; done = 1; next }
+    { print }' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+# release_notes <version> <ref> <range>: the text for the tag message and the
+# GitHub Release page — the changelog entry on <ref> when the changelog is on
+# and the entry has text, else the classified commits of <range>.
+release_notes() {
+  local notes=""
+  changelog_enabled && notes="$(changelog_entry_text "$1" "$2")"
+  if [ -z "$notes" ]; then classify_commits "$3"; notes="$(changelog_sections)"; fi
+  printf '%s\n' "${notes:-Release $1}"
 }
 
 # changelog_sections: the classified commits (classify_commits must have run)

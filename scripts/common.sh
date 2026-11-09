@@ -24,7 +24,10 @@ common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
   || fail "not inside a git repository"
 root="${common_dir%/.git}"
 here="$(git rev-parse --show-toplevel)"
-G() { git -C "$root" "$@"; }
+# MSYS_NO_PATHCONV: Git Bash on Windows rewrites arguments that look like
+# paths, so "release/1.0.0:dir/file.json" would reach git as a Windows path
+# list. Off for git calls only; no-op everywhere else.
+G() { MSYS_NO_PATHCONV=1 git -C "$root" "$@"; }
 has_ref() { G show-ref --verify -q "$1"; }
 
 # switch_on: is an on-by-default setting on?
