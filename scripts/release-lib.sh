@@ -94,3 +94,84 @@ understates() {
   lowest="$(printf '%s\n%s\n' "$2" "$suggested" | sort -V | head -1)"
   [ "$lowest" = "$2" ]
 }
+
+# --- manifests ------------------------------------------------------------------------------
+# The files that declare a version. Only these are bumped; everything else
+# that still names the old version is reported by finish's version sweep.
+MANIFESTS=".claude-plugin/plugin.json .claude-plugin/marketplace.json package.json"
+
+# bump_manifests: set every manifest that declares the current version to
+# <version>. A manifest already at <version> (or declaring something else)
+# is left alone. Prints one "ok:" line per file changed.
+bump_manifests() {
+  local new_version="$1" old_version manifest old_pattern
+  old_version="$(current_manifest_version)"
+  [ -n "$old_version" ] && [ "$old_version" != "$new_version" ] || return 0
+  old_pattern="${old_version//./\.}"
+  for manifest in $MANIFESTS; do
+    [ -f "$root/$manifest" ] || continue
+    grep -qE "\"version\"[[:space:]]*:[[:space:]]*\"$old_pattern\"" "$root/$manifest" || continue
+    sed -i -E "s/(\"version\"[[:space:]]*:[[:space:]]*\")$old_pattern\"/\1$new_version\"/" "$root/$manifest"
+    echo "ok: $manifest $old_version -> $new_version"
+  done
+}
+
+# manifests_not_at <version>: the manifests that do NOT declare <version>, one per
+# line (empty output = all agree). Used by finish as a refusal.
+manifests_not_at() {
+  local manifest declared
+  for manifest in $MANIFESTS; do
+    [ -f "$root/$manifest" ] || continue
+    declared="$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$root/$manifest")"
+    [ -z "$declared" ] && continue
+    printf '%s\n' "$declared" | grep -qvxF "$1" && echo "$manifest"
+  done
+  return 0
+}
+
+# --- changelog ------------------------------------------------------------------------------
+CHANGELOG_FILE="CHANGELOG.md"
+changelog_enabled() { switch_on CC_GITFLOW_REGULATOR_CHANGELOG gitflow.release.changelog; }
+
+# changelog_has_entry: is there a "## <version>" heading (any suffix, CRLF ok)?
+changelog_has_entry() {
+  [ -f "$root/$CHANGELOG_FILE" ] && grep -qE "^## ${1//./\.}( |$|"$'\r'")" "$root/$CHANGELOG_FILE"
+}
+
+# changelog_sections: the classified commits (classify_commits must have run)
+# as Markdown sections, type prefix stripped from each subject:
+#   ### Breaking / ### Added / ### Fixed, each "- <subject>" bullets.
+# Empty sections are left out; prints nothing when there is nothing to list.
+changelog_sections() {
+  local title list printed=0
+  for title in Breaking Added Fixed; do
+    case "$title" in
+      Breaking) list="$breaking_subjects" ;; Added) list="$feat_subjects" ;; Fixed) list="$fix_subjects" ;;
+    esac
+    [ -n "$list" ] || continue
+    [ "$printed" = 1 ] && echo
+    echo "### $title"; echo
+    printf '%s' "$list" | sed -E 's/^[a-z]+(\([^)]*\))?!?:[[:space:]]*/- /; s/ \([0-9a-f]+\)$//'
+    printed=1
+  done
+}
+
+# changelog_draft <version> [range]: add "## <version> — unreleased" as the
+# newest entry, right under the "# ..." title (creating the file with a
+# "# Changelog" title if needed). With a range, the entry is filled with
+# changelog_sections for it; without one it is a bare heading to fill in.
+# An existing entry for <version> is never touched.
+changelog_draft() {
+  local version="$1" range="${2:-}" file="$root/$CHANGELOG_FILE" sections=""
+  changelog_has_entry "$version" && return 0
+  if [ -n "$range" ]; then classify_commits "$range"; sections="$(changelog_sections)"; fi
+  [ -f "$file" ] || printf '# Changelog\n' > "$file"
+  # Insert after the first "# " title line: blank, heading, blank, sections.
+  # (Passed through the environment: awk -v rejects multi-line values.)
+  HEADING="## $version — unreleased" SECTIONS="$sections" awk '
+    !done && /^# / { print; print ""; print ENVIRON["HEADING"]
+                     if (ENVIRON["SECTIONS"] != "") { print ""; print ENVIRON["SECTIONS"] }
+                     done = 1; next }
+    { print }' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+  echo "ok: $CHANGELOG_FILE entry ## $version drafted — edit it before finishing"
+}
