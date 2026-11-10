@@ -22,7 +22,19 @@ First release intended for distribution.
   `failed` jobs are stopped, a `blocked` job is stopped only after the user
   agrees (`--kill-stalled-session`), any other job is left alone, and the
   session running finish is never stopped.
-- Behaviour tests in `tests/` for the hook script and both commands.
+- `/start-release` (alias `/new-release`) and `/finish-release`: cut
+  `release/<version>` from `develop` with the version suggested from the
+  Conventional Commits since the last tag, bump the manifests, draft the
+  changelog entry; then land it on `main` with a tag, merge it back, push,
+  clean up, and (after a yes) push the tag and create the GitHub Release page.
+- `/start-hotfix` (alias `/new-hotfix`) and `/finish-hotfix`: the same for a
+  fix to what is released, branched from `main` and merged back into an open
+  release branch when there is one.
+- Settings `CC_GITFLOW_REGULATOR_CHANGELOG` and
+  `CC_GITFLOW_REGULATOR_GH_RELEASE`, plus per-repo git config switches.
+- Test detection finds plain `*.sh` suites in `tests/`, and
+  `git config gitflow.testCommand` overrides it.
+- Behaviour tests in `tests/` for the hook script and every command.
 
 ### Changed
 
