@@ -146,10 +146,21 @@ check "a resumed finish refuses uncommitted changes" 'finr release finish 2>&1 |
 
 # --- publish ---------------------------------------------------------------------------------
 # A stand-in gh: logs its arguments and the notes file, exits $GH_STUB_EXIT.
+# For the PR route it also plays GitHub's pull requests, kept as marker files
+# next to the log: "pr create" makes pr-open; "pr list --state open|merged"
+# prints a URL while pr-open / pr-merged exists.
 mkdir -p "$SCRATCH/fakebin"
 cat > "$SCRATCH/fakebin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "gh $*" >> "$SCRATCH_LOG"
+state_dir="$(dirname "$SCRATCH_LOG")"
+case "$1 $2" in
+  "pr create") : > "$state_dir/pr-open"; echo "https://example.test/pull/1" ;;
+  "pr list") case "$*" in
+      *"--state open"*) [ -f "$state_dir/pr-open" ] && echo "https://example.test/pull/1" ;;
+      *"--state merged"*) [ -f "$state_dir/pr-merged" ] && echo "https://example.test/pull/1" ;;
+    esac ;;
+esac
 while [ $# -gt 0 ]; do [ "$1" = --notes-file ] && cat "$2" >> "$SCRATCH_LOG"; shift; done
 exit "${GH_STUB_EXIT:-0}"
 STUB
@@ -189,5 +200,49 @@ finr release publish >/dev/null 2>&1; unset CC_GITFLOW_REGULATOR_CHANGELOG
 check "changelog off: release notes come from the commits" 'grep -q "^- a new thing" "$SCRATCH_LOG"'
 landed; git remote remove origin
 check "publish without origin refuses" 'finr release publish 2>&1 | grep -q exit=2'
+
+# --- the PR route (CC_GITFLOW_REGULATOR_RELEASE_PR / gitflow.release.pr) ----------------------
+# pr_opened: opened, PR route switched on for this repo, no PR state left over.
+pr_opened() { opened; git config gitflow.release.pr true; rm -f "$SCRATCH_LOG" "$SCRATCH/pr-open" "$SCRATCH/pr-merged"; }
+# merge_on_origin <how>: play GitHub merging the open PR into main, in a
+# second clone. how = merge (a merge commit) or squash (one copied commit).
+merge_on_origin() {
+  rm -rf "$SCRATCH/f/github"; git clone -q "$SCRATCH/f/origin.git" "$SCRATCH/f/github" 2>/dev/null
+  if [ "$1" = merge ]; then git -C "$SCRATCH/f/github" merge -q --no-ff -m "Merge pull request #1" origin/release/0.4.0
+  else git -C "$SCRATCH/f/github" merge -q --squash origin/release/0.4.0 && git -C "$SCRATCH/f/github" commit -q -m "Release 0.4.0 (#1)"; fi
+  git -C "$SCRATCH/f/github" push -q origin main
+  rm -f "$SCRATCH/pr-open"; : > "$SCRATCH/pr-merged"
+}
+
+pr_opened; main_before="$(git rev-parse main)"
+out="$(finr release plan 2>&1)"
+check "PR route: plan says the merge goes through a PR" 'echo "$out" | grep -q "plan: merge into main: via a PR"'
+out="$(finr release finish 2>&1)"
+check "PR route: finish opens a PR into main and stops" \
+  'echo "$out" | grep -q exit=0 && grep -q "^gh pr create --base main --head release/0.4.0" "$SCRATCH_LOG" && echo "$out" | grep -q "^next: .*merge commit"'
+check "PR route: main untouched, no tag, branch kept and pushed" \
+  '[ "$(git rev-parse main)" = "$main_before" ] && [ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$main_before" ] && ! git show-ref -q --verify refs/tags/v0.4.0 && git show-ref -q --verify refs/heads/release/0.4.0 && [ "$(git ls-remote origin refs/heads/release/0.4.0 | cut -f1)" = "$(git rev-parse release/0.4.0)" ]'
+check "PR route: the entry is dated before the PR opens" 'git show release/0.4.0:CHANGELOG.md | grep -q "^## 0.4.0 — $today"'
+out="$(finr release finish 2>&1)"
+check "PR route: a re-run while the PR is open opens no second PR" \
+  'echo "$out" | grep -q exit=0 && [ "$(grep -c "^gh pr create" "$SCRATCH_LOG")" = 1 ] && echo "$out" | grep -q "already open"'
+merge_on_origin merge; merge_commit="$(git ls-remote origin refs/heads/main | cut -f1)"
+out="$(finr release finish 2>&1)"
+check "PR route: after the merge, finish tags it, merges back and cleans up" \
+  'echo "$out" | grep -q exit=0 && [ "$(git rev-parse "v0.4.0^{commit}")" = "$merge_commit" ] && git merge-base --is-ancestor v0.4.0 develop && ! git show-ref -q --verify refs/heads/release/0.4.0 && echo "$out" | grep -q "^ask: push-tag v0.4.0"'
+check "PR route: the merged release is not merged into main a second time" '[ "$(git rev-parse main)" = "$merge_commit" ]'
+
+pr_opened; finr release finish >/dev/null 2>&1; merge_on_origin squash
+out="$(finr release finish 2>&1)"
+check "PR route: a squash-merged PR refuses (no merge commit to tag)" \
+  'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "merge commit" && ! git show-ref -q --verify refs/tags/v0.4.0 && [ "$(grep -c "^gh pr create" "$SCRATCH_LOG")" = 1 ]'
+pr_opened; out="$(GH_STUB_EXIT=1 finr release finish 2>&1)"
+check "PR route: gh unusable refuses before pushing anything" \
+  'echo "$out" | grep -q exit=2 && ! git ls-remote --exit-code origin refs/heads/release/0.4.0 >/dev/null'
+pr_opened; git remote remove origin
+check "PR route: no origin refuses" 'finr release finish 2>&1 | grep -q exit=2 && ! git show-ref -q --verify refs/tags/v0.4.0'
+pr_opened; git config --unset gitflow.release.pr
+out="$(CC_GITFLOW_REGULATOR_RELEASE_PR=1 finr release finish 2>&1)"
+check "PR route: the env var switches it on too" 'grep -q "^gh pr create" "$SCRATCH_LOG" && ! git show-ref -q --verify refs/tags/v0.4.0'
 
 echo "$failures failure(s)"; [ "$failures" = 0 ]

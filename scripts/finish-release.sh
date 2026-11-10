@@ -8,6 +8,11 @@
 #   finish     check, then land: merge into the production branch, tag,
 #              merge back, push the branches, clean up. Ends with
 #              `ask: push-tag v<version>`; the tag is never pushed here.
+#              PR route (off by default; CC_GITFLOW_REGULATOR_RELEASE_PR /
+#              gitflow.release.pr): production is never merged here. finish
+#              pushes the branch, opens a PR into production and stops with
+#              `next:`; once the PR is merged WITH A MERGE COMMIT, finish
+#              again fetches that merge and carries on from the tag.
 #   sync-main  after a conflict merging into production: merge production
 #              into the release/hotfix branch so the conflict can be resolved
 #              there, then run finish again
@@ -27,7 +32,7 @@
 # Configuration: CC_GITFLOW_REGULATOR_BASE, CC_GITFLOW_REGULATOR_PUSH_MERGED,
 #   CC_GITFLOW_REGULATOR_CHANGELOG / gitflow.release.changelog,
 #   CC_GITFLOW_REGULATOR_GH_RELEASE / gitflow.release.githubRelease,
-#   gitflow.testCommand
+#   CC_GITFLOW_REGULATOR_RELEASE_PR / gitflow.release.pr, gitflow.testCommand
 set -u
 
 branch_type="${1:-}"; mode="${2:-}"
@@ -120,6 +125,18 @@ fi
 # The previous release: the version sweep looks for it, ranges start at it.
 previous_tag="$(last_release_tag "$production")"
 since="${previous_tag:+$previous_tag..}"
+
+# --- PR route: catch up with a merge made on GitHub -------------------------------------------
+# With the PR route on, production is merged on GitHub, so the local copy is
+# stale until fetched. finish fetches and fast-forwards it FIRST, so the
+# landing state below sees the PR's merge and goes straight to tagging.
+# (plan stays read-only: no fetch. Production checked out in another
+# checkout is not moved here; the preflight below refuses that by name.)
+via_pr=0; switch_opted_in CC_GITFLOW_REGULATOR_RELEASE_PR gitflow.release.pr && via_pr=1
+if [ "$via_pr" = 1 ] && [ "$mode" = finish ] && [ "$has_origin" = 1 ]; then
+  G fetch -q --prune origin 2>/dev/null || echo "warn: fetch from origin failed (offline?) — checking against the refs already here"
+  fast_forward_to_origin "$production" && echo "ok: fast-forwarded $production from origin"
+fi
 
 # --- landing state (what is already done) -----------------------------------------------------
 # landed: the branch's work is in production. A tag that exists must sit on a
@@ -231,7 +248,11 @@ if [ "$mode" = plan ]; then
   state() { if [ "$1" = 1 ]; then echo done; else echo "will do"; fi; }
   echo "plan: $branch_type $branch -> $production (tag $tag), then -> $merge_back_into"
   [ "$landed" = 1 ] || echo "plan: tests: run on $branch before merging"
-  echo "plan: merge into $production: $(state "$landed")"
+  if [ "$via_pr" = 1 ] && [ "$landed" = 0 ]; then
+    echo "plan: merge into $production: via a PR — finish pushes $branch and opens it; merge it with a merge commit, then finish again"
+  else
+    echo "plan: merge into $production: $(state "$landed")"
+  fi
   echo "plan: tag $tag: $(state "$tagged")"
   echo "plan: merge back into $merge_back_into: $(state "$merged_back")"
   echo "plan: then push $production and $merge_back_into, delete $branch, and ask before pushing $tag"
@@ -257,6 +278,18 @@ if [ "$landed" = 0 ] && [ "$has_origin" = 1 ]; then
     [ "$behind" = 0 ] || fail "$needed is behind origin by $behind commit(s) — bring it up to date (git pull on $needed) and run finish again"
   done
 fi
+# 3. The PR route, before landing. It REQUIRES a PR: no origin or no working
+#    gh refuses (before tests run or anything is pushed) instead of falling
+#    back to merging here. A PR GitHub already merged while production still
+#    lacks the branch was squashed or rebased: its commits were copied, so no
+#    production commit contains the branch to tag. That needs a human.
+if [ "$via_pr" = 1 ] && [ "$landed" = 0 ]; then
+  [ "$has_origin" = 1 ] || fail "the PR route (gitflow.release.pr) needs an origin remote to open the PR on"
+  (cd "$root" && gh auth status) >/dev/null 2>&1 \
+    || fail "the PR route (gitflow.release.pr) needs gh, installed and logged in (gh auth login)"
+  merged_pr="$(cd "$root" && gh pr list --head "$branch" --base "$production" --state merged --json url --jq '.[0].url' 2>/dev/null)"
+  [ -z "$merged_pr" ] || fail "$merged_pr was merged, but $production does not contain $branch — it was squashed or rebased, so there is no merge commit to tag; revert it on $production and merge $branch with a merge commit"
+fi
 
 # ============================== finish: land ==================================================
 # 1. On the branch: run the tests, then finish the changelog entry.
@@ -272,6 +305,29 @@ if [ "$landed" = 0 ]; then
     if ! W diff --cached --quiet; then
       W commit -q -m "docs(changelog): date $version" && echo "ok: dated the $version changelog entry"
     fi
+  fi
+  # 2a. PR route: production is merged on GitHub, not here.
+  #     - push the branch (on a re-run, that updates the open PR)
+  #     - open the PR into production, unless one is already open
+  #     - stop: the merge must be a MERGE COMMIT so production contains the
+  #       branch; the next finish fetches it and carries on from step 3
+  if [ "$via_pr" = 1 ]; then
+    G push -q origin "$branch" 2>/dev/null || fail "could not push $branch to origin"
+    pr_url="$(cd "$root" && gh pr list --head "$branch" --base "$production" --state open --json url --jq '.[0].url' 2>/dev/null)"
+    if [ -n "$pr_url" ]; then
+      echo "ok: PR already open: $pr_url (pushed $branch to it)"
+    else
+      case "$branch_type" in release) pr_title="Release $version" ;; *) pr_title="Hotfix $version" ;; esac
+      pr_body="$(release_notes "$version" "$branch" "$since$branch")
+
+---
+Opened by \`/finish-$branch_type\`. **Merge this with a merge commit** (not squash or rebase), then run \`/finish-$branch_type\` again: it tags the merge as \`$tag\`, merges it back into \`$merge_back_into\` and deletes \`$branch\`."
+      pr_url="$(cd "$root" && gh pr create --base "$production" --head "$branch" --title "$pr_title" --body "$pr_body")" \
+        || fail "gh pr create failed — $branch is pushed; open a PR into $production by hand"
+      echo "ok: opened PR $pr_url"
+    fi
+    echo "next: merge the PR with a merge commit (not squash or rebase), then run finish again to tag $tag, merge back into $merge_back_into and clean up"
+    exit 0
   fi
   # 2. Merge into production. A conflict aborts the merge and changes nothing.
   W switch -q "$production" || fail "could not switch to $production"
