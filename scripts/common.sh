@@ -6,7 +6,10 @@
 #
 # Functions, roughly in the order a start/finish script needs them:
 #   fail <message>             print "error: <message>" and exit 2 (refused)
-#   G <git args...>            git, run against the main clone
+#   G <git args...>            git, run against the main clone (refs, config)
+#   W <git args...>            git, run in the current checkout (files, commits)
+#   checked_out_at <branch>    the checkout folder that has <branch>, if any
+#   same_folder <a> <b>        do two paths (C:/x vs /c/x) name one folder?
 #   has_ref <full ref>         does refs/heads/x, refs/tags/x, ... exist?
 #   switch_on <ENV> <git.key>  on/off settings: env var first, then git config,
 #                              then on. 0/false/off/no (any case) mean off.
@@ -28,7 +31,23 @@ here="$(git rev-parse --show-toplevel)"
 # paths, so "release/1.0.0:dir/file.json" would reach git as a Windows path
 # list. Off for git calls only; no-op everywhere else.
 G() { MSYS_NO_PATHCONV=1 git -C "$root" "$@"; }
+# W: git in the checkout the user is standing in (a worktree, possibly).
+# Anything that touches files — add, commit, merge, switch — goes through W,
+# so it lands in that checkout and never in the main clone's.
+W() { MSYS_NO_PATHCONV=1 git -C "$here" "$@"; }
 has_ref() { G show-ref --verify -q "$1"; }
+
+# checked_out_at <branch>: the folder of the checkout (main clone or any
+# worktree) that has <branch> checked out; empty when none does.
+checked_out_at() {
+  G worktree list --porcelain | awk -v wanted="branch refs/heads/$1" '
+    /^worktree / { folder = substr($0, 10) }
+    $0 == wanted { print folder; exit }'
+}
+
+# same_folder <a> <b>: do two paths name the same folder? (git may print
+# C:/x where the shell says /c/x, so compare them resolved.)
+same_folder() { [ "$(cd "$1" 2>/dev/null && pwd -P)" = "$(cd "$2" 2>/dev/null && pwd -P)" ]; }
 
 # switch_on: is an on-by-default setting on?
 #   1. the env var, when set, decides (it is the "everywhere" switch)

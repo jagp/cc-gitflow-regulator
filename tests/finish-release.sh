@@ -103,6 +103,47 @@ release_repo; startr hotfix start >/dev/null 2>&1; edit fix.txt fixed "fix: the 
 finr hotfix finish >/dev/null 2>&1
 check "with no release open, the fix goes into develop" 'git merge-base --is-ancestor v0.3.2 develop'
 
+# --- review fixes ----------------------------------------------------------------------------
+# From a worktree while develop is checked out in the main clone: refuse, name it.
+opened; git switch -q develop; wt z develop; cd .claude/worktrees/z || exit 1
+out="$(finr release finish 2>&1)"; cd "$SCRATCH/f/clone" || exit 1
+check "a branch checked out in another worktree is refused by name" \
+  'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "is checked out at" && ! git show-ref -q --verify refs/tags/v0.4.0'
+# BSD wc pads its count with spaces.
+mkdir -p "$SCRATCH/padbin"; printf '#!/usr/bin/env bash\n/usr/bin/wc "$@" | sed "s/^/       /"\n' > "$SCRATCH/padbin/wc"; chmod +x "$SCRATCH/padbin/wc"
+opened
+check "a padded wc -l (macOS) still finds the one release" 'PATH="$SCRATCH/padbin:$PATH" finr release finish 2>&1 | grep -q exit=0'
+# bash 3.2: the date replacement keeps no quotes.
+opened; BASH_COMPAT=32 finr release finish >/dev/null 2>&1
+check "bash 3.2: the entry is dated cleanly" 'git show main:CHANGELOG.md | grep -q "^## 0.4.0 — $today\$"'
+# A hotfix that also changes a dependency keeps that change in the open release.
+release_repo; git switch -q main
+printf '{\n  "name": "x",\n  "version": "0.3.1",\n  "dependencies": {\n    "a": "1.0.0"\n  }\n}\n' > package.json
+git add package.json; git commit -q -m "chore: package.json"; git push -q origin main
+git switch -q develop; git merge -q --no-ff main -m "Merge main"; git push -q origin develop
+startr release start >/dev/null 2>&1; startr hotfix start >/dev/null 2>&1
+sed -i 's/"a": "1.0.0"/"a": "1.0.9"/' package.json; git commit -q -am "fix: bump a for the CVE"
+finr hotfix finish >/dev/null 2>&1
+check "the hotfix's dependency change reaches the open release, which keeps its version" \
+  'git show release/0.4.0:package.json | grep -q "\"a\": \"1.0.9\"" && git show release/0.4.0:package.json | grep -q "\"version\": \"0.4.0\""'
+check "a hotfix does not push a release branch that was never pushed" '! git ls-remote --exit-code origin refs/heads/release/0.4.0 >/dev/null'
+# Saying no to the tag push, then running finish again, asks again.
+opened; finr release finish >/dev/null 2>&1
+out="$(finr release finish 2>&1)"
+check "re-running finish after declining the tag push asks again" 'echo "$out" | grep -q exit=0 && echo "$out" | grep -q "^ask: push-tag v0.4.0"'
+# main behind origin: refuse before merging.
+opened; git clone -q ../origin.git ../other 2>/dev/null
+(cd ../other && echo x > hot.txt && git add hot.txt && git commit -q -m "fix: on main" && git push -q origin main)
+main_before="$(git rev-parse main)"; out="$(finr release finish 2>&1)"
+check "main behind origin is refused before merging" \
+  'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "main is behind origin" && [ "$(git rev-parse main)" = "$main_before" ]'
+# Resuming with uncommitted changes refuses instead of risking them.
+release_repo; edit notes.txt base "docs: notes"; git push -q origin develop
+startr release start >/dev/null 2>&1; edit notes.txt release "docs: release notes"
+git switch -q develop; edit notes.txt develop "docs: develop notes"; git switch -q release/0.4.0
+finr release finish >/dev/null 2>&1; echo edited >> CHANGELOG.md
+check "a resumed finish refuses uncommitted changes" 'finr release finish 2>&1 | grep -q "uncommitted changes" && grep -q edited CHANGELOG.md'
+
 # --- publish ---------------------------------------------------------------------------------
 # A stand-in gh: logs its arguments and the notes file, exits $GH_STUB_EXIT.
 mkdir -p "$SCRATCH/fakebin"

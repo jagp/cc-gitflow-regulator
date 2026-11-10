@@ -50,7 +50,12 @@ last_tag="$(last_release_tag "$start_point")"
 last_version="${last_tag#v}"
 [ -n "$last_version" ] || last_version="$(current_manifest_version)"
 [ -n "$last_version" ] || last_version="0.0.0"
-valid_version "$last_version" || fail "the current version '$last_version' is not X.Y.Z — name the new version explicitly"
+# Only a suggestion needs a usable current version; a named one doesn't
+# (e.g. a manifest still saying 0.4.0-beta.1 while the user names 0.4.0).
+if ! valid_version "$last_version"; then
+  [ -n "$given_version" ] || fail "the current version '$last_version' is not X.Y.Z — name the new version explicitly"
+  last_version="0.0.0"
+fi
 
 if [ "$branch_type" = release ]; then
   # Classify what develop gained since the last tag (all of develop if none).
@@ -83,9 +88,14 @@ branch="$branch_type/$version"
 
 # --- 2. refusals -----------------------------------------------------------------------------
 require_clean_tree "$here"
-open_branch="$(G for-each-ref --format='%(refname:short)' "refs/heads/$branch_type/" "refs/remotes/origin/$branch_type/" | head -1)"
-[ -z "$open_branch" ] || fail "${open_branch#origin/} is still open — finish it first (one $branch_type at a time)"
 has_origin=0; G remote get-url origin >/dev/null 2>&1 && has_origin=1
+# Open branches: local ones, plus origin's asked live (ls-remote), so one a
+# teammate pushed counts even before it was fetched.
+open_branch="$(G for-each-ref --format='%(refname:short)' "refs/heads/$branch_type/" | head -1)"
+if [ -z "$open_branch" ] && [ "$has_origin" = 1 ]; then
+  open_branch="$(G ls-remote --heads origin "refs/heads/$branch_type/*" 2>/dev/null | head -1 | sed 's|.*refs/heads/||')"
+fi
+[ -z "$open_branch" ] || fail "$open_branch is still open — finish it first (one $branch_type at a time)"
 if has_ref "refs/tags/v$version" \
    || { [ "$has_origin" = 1 ] && G ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; }; then
   fail "tag v$version already exists — that version was released; pick another"
@@ -99,14 +109,20 @@ if [ "$branch_type" = release ]; then
   if has_ref "refs/remotes/origin/$integration"; then
     behind="$(G rev-list --count "$integration..origin/$integration")"
     ahead="$(G rev-list --count "origin/$integration..$integration")"
+    # Strictly behind: fast-forward — but a branch checked out in ANOTHER
+    # checkout can't be moved safely (its files would go stale and the next
+    # commit there would undo the new commits), so that case only warns.
+    integration_folder="$(checked_out_at "$integration")"
     if [ "$behind" != 0 ] && [ "$ahead" = 0 ]; then
       if [ "$mode" = plan ]; then
         echo "plan: $integration is $behind commit(s) behind origin — start will fast-forward it"
-      elif [ "$(git -C "$here" branch --show-current)" = "$integration" ]; then
-        git -C "$here" merge -q --ff-only "origin/$integration" && echo "ok: fast-forwarded $integration from origin"
-      else
+      elif [ -z "$integration_folder" ]; then
         G update-ref "refs/heads/$integration" "refs/remotes/origin/$integration" \
           && echo "ok: fast-forwarded $integration from origin"
+      elif same_folder "$integration_folder" "$here"; then
+        W merge -q --ff-only "origin/$integration" && echo "ok: fast-forwarded $integration from origin"
+      else
+        echo "warn: $integration is behind origin by $behind commit(s) but checked out at $integration_folder — releasing local $integration; pull it there first if those commits belong in this release"
       fi
     elif [ "$behind" != 0 ]; then
       echo "warn: $integration has diverged from origin ($ahead ahead, $behind behind) — releasing local $integration"
@@ -124,7 +140,7 @@ if [ "$mode" = plan ]; then
   echo "plan: start will create $branch from $start_point, bump the manifests to $version, and draft the changelog entry"
   exit 0
 fi
-git -C "$here" switch -q -c "$branch" "$start_point" || fail "could not create $branch from $start_point"
+W switch -q -c "$branch" "$start_point" || fail "could not create $branch from $start_point"
 echo "ok: created $branch from $start_point — now checked out in $here (not pushed)"
 bump_manifests "$version"
 if changelog_enabled; then
@@ -134,10 +150,10 @@ if changelog_enabled; then
     changelog_draft "$version"
   fi
 fi
-for file in $MANIFESTS $CHANGELOG_FILE; do [ -f "$root/$file" ] && G add -- "$file"; done
-if ! G diff --cached --quiet; then
-  G commit -q -m "chore(release): bump version to $version" && echo "ok: committed the version bump"
+for file in $MANIFESTS $CHANGELOG_FILE; do [ -f "$here/$file" ] && W add -- "$file"; done
+if ! W diff --cached --quiet; then
+  W commit -q -m "chore(release): bump version to $version" && echo "ok: committed the version bump"
 fi
 run_tests "$here"
-echo "done: $branch started at $(G rev-parse --short HEAD)"
+echo "done: $branch started at $(W rev-parse --short HEAD)"
 exit 0

@@ -79,7 +79,7 @@ if [ "$mode" = publish ]; then
   echo "rollback: git push origin :refs/tags/$tag"
   echo "rollback: git tag -d $tag"
   echo "rollback: git revert -m 1 $production_merge   (on $production, then push it)"
-  notify_list="$(awk '/^## Notify/ { inside = 1; next } inside && /^## / { exit } inside && /^- / { print substr($0, 3) }' "$root/RELEASING.md" 2>/dev/null | tr -d '\r')"
+  notify_list="$(awk '/^## Notify/ { inside = 1; next } inside && /^## / { exit } inside && /^- / { print substr($0, 3) }' "$here/RELEASING.md" 2>/dev/null | tr -d '\r')"
   if [ -n "$notify_list" ]; then
     printf '%s\n' "$notify_list" | sed 's/^/notify: /'
     echo "announce: $(basename "$root") $tag is out"
@@ -93,8 +93,20 @@ fi
 # --- the branch being finished --------------------------------------------------------------
 # Exactly one local <type>/* branch; its name carries the version.
 open_branches="$(G for-each-ref --format='%(refname:short)' "refs/heads/$branch_type/")"
-[ -n "$open_branches" ] || fail "no $branch_type/* branch to finish"
-[ "$(printf '%s\n' "$open_branches" | wc -l)" = 1 ] \
+if [ -z "$open_branches" ]; then
+  # Nothing left to land. If the last finish ended with the tag push
+  # declined, the tag is still local only: offer it again.
+  last_tag="$(last_release_tag "$production")"
+  if [ -n "$last_tag" ] && [ "$has_origin" = 1 ] \
+     && ! G ls-remote --exit-code --tags origin "refs/tags/$last_tag" >/dev/null 2>&1; then
+    echo "ok: no $branch_type/* branch open — $last_tag is landed but not pushed yet"
+    echo "ask: push-tag $last_tag — push the tag and publish the release?"
+    exit 0
+  fi
+  fail "no $branch_type/* branch to finish"
+fi
+# -eq, not =: BSD wc (macOS) pads the count with spaces.
+[ "$(printf '%s\n' "$open_branches" | wc -l)" -eq 1 ] \
   || fail "several $branch_type branches are open: $(printf '%s' "$open_branches" | paste -sd ' ' -) — finish them one at a time"
 branch="$open_branches"; version="${branch#"$branch_type"/}"; tag="v$version"
 valid_version "$version" || fail "$branch is not named $branch_type/X.Y.Z"
@@ -121,36 +133,47 @@ if has_ref "refs/tags/$tag"; then
 fi
 merged_back=0; G merge-base --is-ancestor "$branch" "$merge_back_into" 2>/dev/null && merged_back=1
 
-# conflicted_files: the paths an in-progress merge in <dir> left unmerged.
-conflicted_files() { git -C "$1" diff --name-only --diff-filter=U | sed 's/^/conflict: /'; }
+# conflicted_files: the paths the in-progress merge in this checkout left unmerged.
+conflicted_files() { W diff --name-only --diff-filter=U | sed 's/^/conflict: /'; }
 
-# resolve_version_conflicts <dir>: settle the conflicts every hotfix-into-
-# release merge has, and only those. Both branches bumped the version files:
-#   - manifests:  keep the branch being merged INTO (the release's version
-#                 is the one going out next)
-#   - changelog:  keep both sides' lines (the hotfix entry and the release's)
-# Any other conflicted file means a real conflict: return 1 and leave the
-# merge for the caller to abort. All settled: commit the merge, return 0.
+# resolve_version_conflicts: settle the conflict every hotfix-into-release
+# merge has — both branches bumped the version — and nothing more.
+#   - manifests: in the base, ours and theirs copies, set this project's
+#     version line to OURS (the release's version is the one going out next),
+#     then re-run the three-way merge. With the version clash gone, the rest
+#     of the hotfix's changes (a bumped dependency, say) merge normally. If
+#     anything still conflicts, it is a real conflict: give up.
+#   - changelog: keep both sides' lines (the hotfix entry and the release's).
+#   - any other conflicted file: a real conflict, give up.
+# Gives up with return 1 (the caller aborts the whole merge). All settled:
+# commit the merge and return 0.
 resolve_version_conflicts() {
-  local dir="$1" file base_copy theirs_copy
-  for file in $(git -C "$dir" diff --name-only --diff-filter=U); do
+  local file stage_copy ours_copy base_copy theirs_copy ours_version found
+  for file in $(W diff --name-only --diff-filter=U); do
     case " $MANIFESTS $CHANGELOG_FILE " in *" $file "*) ;; *) return 1 ;; esac
   done
-  for file in $(git -C "$dir" diff --name-only --diff-filter=U); do
+  for file in $(W diff --name-only --diff-filter=U); do
+    ours_copy="$(mktemp)"; base_copy="$(mktemp)"; theirs_copy="$(mktemp)"
+    W show ":2:$file" > "$ours_copy"
+    W show ":1:$file" > "$base_copy" 2>/dev/null || : > "$base_copy"
+    W show ":3:$file" > "$theirs_copy"
     if [ "$file" = "$CHANGELOG_FILE" ]; then
-      base_copy="$(mktemp)"; theirs_copy="$(mktemp)"
-      git -C "$dir" show ":1:$file" > "$base_copy" 2>/dev/null || : > "$base_copy"
-      git -C "$dir" show ":3:$file" > "$theirs_copy"
-      git -C "$dir" show ":2:$file" > "$dir/$file"
-      git merge-file --union "$dir/$file" "$base_copy" "$theirs_copy"
-      rm -f "$base_copy" "$theirs_copy"
+      git merge-file --union "$ours_copy" "$base_copy" "$theirs_copy"
     else
-      git -C "$dir" checkout -q --ours -- "$file"
+      ours_version="$(own_version_line "$file" "$ours_copy")"; ours_version="${ours_version#* }"
+      for stage_copy in "$base_copy" "$theirs_copy"; do
+        found="$(own_version_line "$file" "$stage_copy")"
+        [ -n "$found" ] && replace_on_line "$stage_copy" "${found%% *}" "\"${found#* }\"" "\"$ours_version\""
+      done
+      if ! git merge-file "$ours_copy" "$base_copy" "$theirs_copy" 2>/dev/null; then
+        rm -f "$ours_copy" "$base_copy" "$theirs_copy"; return 1
+      fi
     fi
-    git -C "$dir" add -- "$file"
+    cat "$ours_copy" > "$here/$file"; rm -f "$ours_copy" "$base_copy" "$theirs_copy"
+    W add -- "$file"
     echo "ok: settled the version conflict in $file"
   done
-  git -C "$dir" commit -q --no-edit
+  W commit -q --no-edit
 }
 
 # ============================== sync-main =====================================================
@@ -158,12 +181,12 @@ resolve_version_conflicts() {
 # merge is LEFT in progress: resolving it on the branch is the whole point.
 if [ "$mode" = sync-main ]; then
   require_clean_tree "$here"
-  git -C "$here" switch -q "$branch" || fail "could not switch to $branch"
-  if git -C "$here" merge -q --no-ff -m "Merge branch '$production' into $branch" "$production" >/dev/null 2>&1; then
+  W switch -q "$branch" || fail "could not switch to $branch"
+  if W merge -q --no-ff -m "Merge branch '$production' into $branch" "$production" >/dev/null 2>&1; then
     echo "ok: merged $production into $branch — run finish again"
     exit 0
   fi
-  conflicted_files "$here"
+  conflicted_files
   echo "next: resolve these files on $branch, commit, then run finish again"
   exit 3
 fi
@@ -171,8 +194,10 @@ fi
 # ============================== checks ========================================================
 # Only before landing: once the branch is in production, re-checking it would
 # block a resumed run for no gain.
+# Uncommitted changes are refused on EVERY finish run, resumed ones too: the
+# landing steps switch branches and may abort merges, which could lose them.
+[ "$mode" = finish ] && require_clean_tree "$here"
 if [ "$landed" = 0 ]; then
-  [ "$mode" = finish ] && require_clean_tree "$here"
   # Refusals.
   if changelog_enabled && ! changelog_has_entry "$version" "$branch"; then
     fail "$CHANGELOG_FILE has no entry for $version on $branch — add \"## $version\" (or switch the changelog off)"
@@ -213,26 +238,46 @@ if [ "$mode" = plan ]; then
   exit 0
 fi
 
+# ============================== finish: preflight =============================================
+# 1. Every branch finish switches to must be free here: one checked out in
+#    ANOTHER checkout (main clone or worktree) can't be switched to, and
+#    moving it under that checkout would leave its files stale.
+for needed in "$branch" "$production" "$merge_back_into"; do
+  folder="$(checked_out_at "$needed")"
+  [ -z "$folder" ] || same_folder "$folder" "$here"     || fail "$needed is checked out at $folder — run /finish-$branch_type there, or switch that checkout to another branch first"
+done
+# 2. Before landing, production and the merge-back branch must not be behind
+#    origin: merging and tagging a stale copy would be rejected on push, or
+#    silently leave a teammate's commits out of the release.
+if [ "$landed" = 0 ] && [ "$has_origin" = 1 ]; then
+  G fetch -q origin 2>/dev/null || echo "warn: fetch from origin failed (offline?) — checking against the refs already here"
+  for needed in "$production" "$merge_back_into"; do
+    has_ref "refs/remotes/origin/$needed" || continue
+    behind="$(G rev-list --count "$needed..origin/$needed")"
+    [ "$behind" = 0 ] || fail "$needed is behind origin by $behind commit(s) — bring it up to date (git pull on $needed) and run finish again"
+  done
+fi
+
 # ============================== finish: land ==================================================
 # 1. On the branch: run the tests, then finish the changelog entry.
 if [ "$landed" = 0 ]; then
-  git -C "$here" switch -q "$branch" || fail "could not switch to $branch"
+  W switch -q "$branch" || fail "could not switch to $branch"
   run_tests "$here" || fail "tests failed on $branch — fix them before finishing"
   if changelog_enabled; then
     [ "$branch_type" = hotfix ] && changelog_fill_empty "$version" "$since$branch"
     changelog_set_date "$version"
     # Stage first, then commit only if git sees a real change (line-ending
     # normalisation can make an untouched file look modified).
-    [ -f "$root/$CHANGELOG_FILE" ] && G add -- "$CHANGELOG_FILE"
-    if ! G diff --cached --quiet; then
-      G commit -q -m "docs(changelog): date $version" && echo "ok: dated the $version changelog entry"
+    [ -f "$here/$CHANGELOG_FILE" ] && W add -- "$CHANGELOG_FILE"
+    if ! W diff --cached --quiet; then
+      W commit -q -m "docs(changelog): date $version" && echo "ok: dated the $version changelog entry"
     fi
   fi
   # 2. Merge into production. A conflict aborts the merge and changes nothing.
-  git -C "$here" switch -q "$production" || fail "could not switch to $production"
-  if ! git -C "$here" merge -q --no-ff -m "Merge branch '$branch'" "$branch" >/dev/null 2>&1; then
-    conflicted_files "$here"
-    git -C "$here" merge --abort; git -C "$here" switch -q "$branch"
+  W switch -q "$production" || fail "could not switch to $production"
+  if ! W merge -q --no-ff -m "Merge branch '$branch'" "$branch" >/dev/null 2>&1; then
+    conflicted_files
+    W merge --abort; W switch -q "$branch"
     echo "ask: sync-main — merging $branch into $production conflicts; merge $production into $branch to resolve it there, then finish again"
     exit 3
   fi
@@ -246,37 +291,45 @@ if [ "$tagged" = 0 ]; then
 fi
 # 4. Merge back. A conflict aborts; production and the tag stay as they are.
 if [ "$merged_back" = 0 ]; then
-  git -C "$here" switch -q "$merge_back_into" || fail "could not switch to $merge_back_into"
+  W switch -q "$merge_back_into" || fail "could not switch to $merge_back_into"
   # The TAG is merged (git-flow's default), not the branch: that brings the
   # production merge commit along, so $merge_back_into stays a superset of
   # $production and the next release's "commits only on production" check
   # stays quiet.
-  if ! git -C "$here" merge -q --no-ff -m "Merge tag '$tag' into $merge_back_into" "$tag" >/dev/null 2>&1 \
-     && ! resolve_version_conflicts "$here"; then
-    conflicted_files "$here"
-    git -C "$here" merge --abort; git -C "$here" switch -q "$branch"
+  if ! W merge -q --no-ff -m "Merge tag '$tag' into $merge_back_into" "$tag" >/dev/null 2>&1 \
+     && ! resolve_version_conflicts; then
+    conflicted_files
+    W merge --abort; W switch -q "$branch"
     echo "next: merge $branch into $merge_back_into by hand and resolve the conflict, then finish again ($production and $tag are done, local only)"
     exit 3
   fi
   echo "ok: merged $tag into $merge_back_into (--no-ff)"
 fi
-git -C "$here" switch -q "$merge_back_into" 2>/dev/null
+W switch -q "$merge_back_into" 2>/dev/null
 
 # 5. Push the branches (never the tag here).
 if [ "$has_origin" = 0 ]; then
   echo "ok: nothing pushed — no origin remote"
 elif ! switch_on CC_GITFLOW_REGULATOR_PUSH_MERGED gitflow.release.pushMerged; then
   echo "ok: nothing pushed (CC_GITFLOW_REGULATOR_PUSH_MERGED is off)"
-elif G push -q origin "$production" "$merge_back_into" 2>/dev/null; then
-  echo "ok: pushed $production and $merge_back_into to origin"
 else
-  echo "warn: could not push $production and $merge_back_into (rejected or offline) — push them yourself" >&2
-  incomplete=1
+  # Push production, plus the merge-back branch when it is the integration
+  # branch or already on origin: a hotfix merged into a release branch nobody
+  # pushed yet does not publish that release branch. --atomic: all or none.
+  push_list="$production"
+  if [ "$merge_back_into" = "$integration" ] || has_ref "refs/remotes/origin/$merge_back_into"; then
+    push_list="$push_list $merge_back_into"
+  fi
+  if G push -q --atomic origin $push_list 2>/dev/null; then
+    echo "ok: pushed $push_list to origin"
+  else
+    echo "warn: could not push $push_list (rejected or offline) — nothing was pushed; push them yourself" >&2
+    incomplete=1
+  fi
 fi
 
 # ============================== finish: clean up ==============================================
 # The work is in production and merged back, so the branch can go.
-branch_tip="$(G rev-parse "$branch")"
 if G branch -D "$branch" >/dev/null 2>&1; then
   G config --remove-section "gitflow.branch.$branch" 2>/dev/null
   echo "ok: deleted branch $branch"

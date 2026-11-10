@@ -107,4 +107,43 @@ check "hotfix bumps manifests and adds a bare entry" \
   'grep -q "\"version\": \"0.3.2\"" .claude-plugin/plugin.json && grep -q "^## 0.3.2 — unreleased" CHANGELOG.md && ! grep -q "^### " CHANGELOG.md'
 check "a second hotfix is refused" 'startr hotfix start 0.3.3 2>&1 | grep -q "hotfix/0.3.2 is still open"'
 
+# --- review fixes ----------------------------------------------------------------------------
+# From a worktree: the release is created there, the bump commit lands on it,
+# and the main clone (on develop) is not touched.
+release_repo; develop_before="$(git rev-parse develop)"; wt z develop; cd .claude/worktrees/z || exit 1
+startr release start >/dev/null 2>&1
+check "from a worktree: the release and its bump commit stay in the worktree" \
+  '[ "$(git branch --show-current)" = release/0.4.0 ] && [ "$(git log -1 --format=%s release/0.4.0)" = "chore(release): bump version to 0.4.0" ] && [ "$(git rev-parse develop)" = "$develop_before" ] && grep -q "\"0.3.1\"" "$SCRATCH/f/clone/.claude-plugin/plugin.json"'
+cd "$SCRATCH/f/clone" || exit 1
+# develop behind origin but checked out in the main clone: never moved under it.
+release_repo; git clone -q ../origin.git ../other 2>/dev/null
+(cd ../other && git switch -q develop && echo teammate > new.txt && git add new.txt && git commit -q -m "feat: teammate" && git push -q)
+develop_before="$(git rev-parse develop)"; wt z develop; cd .claude/worktrees/z || exit 1
+out="$(startr release start 2>&1)"
+cd "$SCRATCH/f/clone" || exit 1
+check "develop checked out elsewhere is not fast-forwarded under that checkout" \
+  '[ "$(git rev-parse develop)" = "$develop_before" ] && [ -z "$(git status --porcelain --untracked-files=no)" ] && echo "$out" | grep -q "warn: develop is behind origin"'
+# bash 3.2 (macOS default): a quoted replacement keeps its quotes there.
+release_repo; BASH_COMPAT=32 startr release start >/dev/null 2>&1
+check "bash 3.2: manifests bumped cleanly" 'grep -q "\"version\": \"0.4.0\"" .claude-plugin/plugin.json && ! grep -q "\"\"" .claude-plugin/plugin.json'
+# A pre-release manifest version does not block a named version.
+fresh; git switch -q develop; mkdir .claude-plugin
+printf '{\n  "name": "x",\n  "version": "0.4.0-beta.1"\n}\n' > .claude-plugin/plugin.json; git add .; git commit -q -m "chore: beta"
+check "a pre-release manifest does not block a named version" 'startr release start 0.4.0 2>&1 | grep -q exit=0'
+# A release only on origin (not fetched yet) is still seen.
+release_repo; git clone -q ../origin.git ../other2 2>/dev/null
+(cd ../other2 && git push -q origin origin/develop:refs/heads/release/0.9.0)
+check "a release pushed by someone else (not fetched) blocks a new one" 'startr release start 2>&1 | grep -q "release/0.9.0 is still open"'
+# A CRLF changelog keeps CRLF on every line after drafting.
+release_repo; printf '# Changelog\r\n\r\n## 0.3.1 — 2026-01-01\r\n\r\n- old\r\n' > CHANGELOG.md; git commit -q -am "docs: crlf"
+startr release start >/dev/null 2>&1
+check "drafting into a CRLF changelog keeps CRLF on every line" \
+  '[ "$(tr -cd "\r" < CHANGELOG.md | wc -c)" -eq "$(tr -cd "\n" < CHANGELOG.md | wc -c)" ] && grep -q "^## 0.4.0" CHANGELOG.md'
+# A marketplace listing other plugins: only this plugin's entry is bumped.
+release_repo
+printf '{\n  "plugins": [\n    {\n      "name": "other",\n      "version": "0.3.1"\n    },\n    {\n      "name": "x",\n      "version": "0.3.1"\n    }\n  ]\n}\n' > .claude-plugin/marketplace.json
+git commit -q -am "chore: two plugins"; startr release start >/dev/null 2>&1
+check "only this plugin's marketplace entry is bumped" \
+  '[ "$(grep -c "\"0.4.0\"" .claude-plugin/marketplace.json)" = 1 ] && [ "$(grep -c "\"0.3.1\"" .claude-plugin/marketplace.json)" = 1 ] && sed -n 9p .claude-plugin/marketplace.json | grep -q 0.4.0'
+
 echo "$failures failure(s)"; [ "$failures" = 0 ]
