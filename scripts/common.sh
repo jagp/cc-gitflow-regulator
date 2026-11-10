@@ -11,8 +11,11 @@
 #   checked_out_at <branch>    the checkout folder that has <branch>, if any
 #   same_folder <a> <b>        do two paths (C:/x vs /c/x) name one folder?
 #   has_ref <full ref>         does refs/heads/x, refs/tags/x, ... exist?
+#   fast_forward_to_origin <b> move <b> up to origin/<b> when strictly behind
 #   switch_on <ENV> <git.key>  on/off settings: env var first, then git config,
 #                              then on. 0/false/off/no (any case) mean off.
+#   switch_opted_in <ENV> <key> the same for an off-by-default setting:
+#                              only 1/true/on/yes (any case) mean on.
 #   production_branch          gitflow.branch.master if set, else main, else master
 #   integration_branch         CC_GITFLOW_REGULATOR_BASE if set, else develop, else dev
 #   require_clean_tree <dir>   refuse when tracked files have uncommitted changes
@@ -49,18 +52,44 @@ checked_out_at() {
 # C:/x where the shell says /c/x, so compare them resolved.)
 same_folder() { [ "$(cd "$1" 2>/dev/null && pwd -P)" = "$(cd "$2" 2>/dev/null && pwd -P)" ]; }
 
-# switch_on: is an on-by-default setting on?
-#   1. the env var, when set, decides (it is the "everywhere" switch)
-#   2. else the git config key decides (the "this repo only" switch)
-#   3. else on
-switch_on() {
+# fast_forward_to_origin <branch>: move <branch> up to origin/<branch>, but
+# only when it is strictly behind (no commits of its own). The caller fetches.
+# How it moves depends on where <branch> is checked out:
+#   nowhere        -> update-ref moves just the ref
+#   in this folder -> merge --ff-only moves the ref and the files
+#   elsewhere      -> left alone: that checkout's files would go stale and its
+#                     next commit would quietly undo the new commits
+# Returns 0 moved, 1 nothing to do (up to date, ahead, diverged, or no
+# origin copy), 2 checked out elsewhere, 3 the move itself failed.
+fast_forward_to_origin() {
+  local branch="$1" folder
+  has_ref "refs/remotes/origin/$branch" || return 1
+  [ "$(G rev-list --count "$branch..origin/$branch")" != 0 ] || return 1   # not behind
+  [ "$(G rev-list --count "origin/$branch..$branch")" = 0 ] || return 1    # has its own commits
+  folder="$(checked_out_at "$branch")"
+  if [ -z "$folder" ]; then G update-ref "refs/heads/$branch" "refs/remotes/origin/$branch" || return 3
+  elif same_folder "$folder" "$here"; then W merge -q --ff-only "origin/$branch" || return 3
+  else return 2; fi
+}
+
+# switch_value <ENV> <git.key>: a setting's raw value, lowercased. Where it
+# comes from, in order:
+#   1. the env var, when set (it is the "everywhere" switch)
+#   2. else the git config key (the "this repo only" switch)
+#   3. else empty: the caller's default applies
+switch_value() {
   local env_name="$1" config_key="$2" value
   value="${!env_name:-}"
   [ -n "$value" ] || value="$(G config --get "$config_key" 2>/dev/null || true)"
-  case "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" in
-    0|false|off|no) return 1 ;;
-    *) return 0 ;;
-  esac
+  printf '%s' "$value" | tr '[:upper:]' '[:lower:]'
+}
+# switch_on: is an on-by-default setting on? Only 0/false/off/no turn it off.
+switch_on() {
+  case "$(switch_value "$1" "$2")" in 0|false|off|no) return 1 ;; *) return 0 ;; esac
+}
+# switch_opted_in: is an off-by-default setting on? Only 1/true/on/yes turn it on.
+switch_opted_in() {
+  case "$(switch_value "$1" "$2")" in 1|true|on|yes) return 0 ;; *) return 1 ;; esac
 }
 
 # production_branch: where releases land and get tagged. git-flow's own
