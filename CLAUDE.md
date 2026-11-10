@@ -14,7 +14,7 @@
 
 - Gitflow: feature branches off `develop` (configurable)
 - Hooks only target `.claude/worktrees/`; the user-invoked commands (`/start-*`, `/finish-*` for features, releases, hotfixes) act on the user's own checkout
-- Hooks never push. `/finish-feature` pushes the merged base and `/finish-release`/`/finish-hotfix` push main + the merge-back branch (opt-out for both: `CC_GITFLOW_REGULATOR_PUSH_MERGED=0`); `/finish-feature` pushes the feature branch for its PR on conflict; never a force push
+- Hooks never push. `/finish-feature` pushes the merged base and `/finish-release`/`/finish-hotfix` push main + the merge-back branch (opt-out for both: `CC_GITFLOW_REGULATOR_PUSH_MERGED=0`); with `CC_GITFLOW_REGULATOR_RELEASE_PR` / `gitflow.release.pr` on, release/hotfix finish lands on main through a `gh` PR instead and never merges main locally; `/finish-feature` pushes the feature branch for its PR on conflict; never a force push
 - Default-on: deleting a local branch once a long-lived branch holds it, stopping a `done`/`failed` background job that holds its worktree, the changelog entry, the GitHub Release page
 - Gated on the user's explicit yes: deleting a branch on origin, discarding worktree leftovers, stopping a `blocked` job, pushing a release tag (and publishing)
 

@@ -82,6 +82,7 @@ All optional, via environment variables (e.g. the `"env"` block in
 | `CC_GITFLOW_REGULATOR_PUSH_MERGED`    | on                        | `/finish-feature` and `/finish-release` push the merged branches to origin after merging. Set `0` (or `false`/`off`/`no`) to keep merges local.                          |
 | `CC_GITFLOW_REGULATOR_CHANGELOG`      | on                        | Release commands draft, require and date a `CHANGELOG.md` entry. `0` turns that off; release notes then come from the commit list.            |
 | `CC_GITFLOW_REGULATOR_GH_RELEASE`     | on                        | Publishing a release also creates its GitHub Release page with `gh`. `0` turns that off.                                                        |
+| `CC_GITFLOW_REGULATOR_RELEASE_PR`     | off                       | `/finish-release` and `/finish-hotfix` land on `main` through a GitHub PR instead of merging locally. `1` (or `true`/`on`/`yes`) turns it on; needs `gh`. |
 
 ## Starting a branch: `/start-feature`
 
@@ -235,6 +236,18 @@ conflict with `main`, the command offers to merge `main` into the release
 branch so you can resolve it there) and run the command again; every step
 that already happened is skipped.
 
+**Landing through a PR.** With `CC_GITFLOW_REGULATOR_RELEASE_PR=1` (or
+`git config gitflow.release.pr true` for one repo), finish never merges
+into `main` itself. After the checks, tests and changelog date, it pushes
+the release branch, opens a PR into `main` and stops. Merge that PR **with a
+merge commit**, then run the command again: it fetches the merge, tags it,
+merges back into `develop`, pushes `develop` and cleans up. A squash or
+rebase merge copies the commits instead of merging them, so `main` never
+contains the branch; finish refuses that case rather than tagging a guess.
+Without `gh` (installed and logged in) or an origin remote, finish refuses
+instead of falling back to a local merge. The merge back into `develop` is
+still pushed directly, as with features.
+
 **Publishing.** The command then asks before pushing the tag. On yes it
 pushes it, creates the GitHub Release page with the changelog entry as notes
 (`gh` needed; without it you get the exact command to run), and prints the
@@ -244,7 +257,8 @@ Nothing is sent anywhere.
 
 Per-repo switches (git config) mirror the variables above:
 `gitflow.release.changelog false`, `gitflow.release.githubRelease false`,
-`gitflow.release.pushMerged false`.
+`gitflow.release.pushMerged false`, and the off-by-default
+`gitflow.release.pr true`.
 
 **Tests.** The commands find a project's tests on their own: `npm`/`pnpm`/
 `yarn`/`bun` `test` scripts, pytest, `cargo test`, `go test`, a Makefile
