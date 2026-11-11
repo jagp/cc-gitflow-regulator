@@ -14,8 +14,10 @@
 #   fast_forward_to_origin <b> move <b> up to origin/<b> when strictly behind
 #   switch_on <ENV> <git.key>  on/off settings: env var first, then git config,
 #                              then on. 0/false/off/no (any case) mean off.
-#   switch_opted_in <ENV> <key> the same for an off-by-default setting:
-#                              only 1/true/on/yes (any case) mean on.
+#   merge_mode <ENV> <key> <default>  pr | push | local for one merge stage
+#   require_pr_tools <setting> refuse unless origin and a logged-in gh exist
+#   refuse_squashed_pr <base> <head>  refuse a PR GitHub squashed/rebased
+#   open_pr <base> <head> <title> <body>  open (or reuse) a PR, print its URL
 #   production_branch          gitflow.branch.master if set, else main, else master
 #   integration_branch         CC_GITFLOW_REGULATOR_BASE if set, else develop, else dev
 #   require_clean_tree <dir>   refuse when tracked files have uncommitted changes
@@ -87,9 +89,50 @@ switch_value() {
 switch_on() {
   case "$(switch_value "$1" "$2")" in 0|false|off|no) return 1 ;; *) return 0 ;; esac
 }
-# switch_opted_in: is an off-by-default setting on? Only 1/true/on/yes turn it on.
-switch_opted_in() {
-  case "$(switch_value "$1" "$2")" in 1|true|on|yes) return 0 ;; *) return 1 ;; esac
+
+# merge_mode <ENV> <git.key> <default>: how one merge stage lands.
+#   pr     push the branch, open a GitHub PR and stop; the merge happens there
+#   push   merge here, then push the result to origin
+#   local  merge here, push nothing
+# Read like a switch (env var, then git config, then <default>). Any other
+# value refuses: a typo must not quietly pick the wrong route. It runs in a
+# $( ), so callers add `|| exit 2` to stop on that refusal.
+merge_mode() {
+  local value; value="$(switch_value "$1" "$2")"; value="${value:-$3}"
+  case "$value" in pr|push|local) printf '%s' "$value" ;;
+    *) fail "$1 / $2 is '$value' — expected pr, push or local" ;; esac
+}
+
+# require_pr_tools <setting>: the pr mode needs an origin remote and gh,
+# installed and logged in. It refuses instead of falling back to a local
+# merge: a stage set to pr must never land any other way.
+require_pr_tools() {
+  G remote get-url origin >/dev/null 2>&1 || fail "$1=pr needs an origin remote to open the PR on"
+  (cd "$root" && gh auth status) >/dev/null 2>&1 || fail "$1=pr needs gh, installed and logged in (gh auth login)"
+}
+
+# refuse_squashed_pr <base> <head>: GitHub merged a PR from <head> into
+# <base>, yet origin/<base> does not contain <head>. Then it was squashed or
+# rebased: the commits were COPIED, so git can't tell <head> landed, and the
+# next steps (cleanup, tagging) would act on a guess. A human sorts it out.
+refuse_squashed_pr() {
+  local url
+  url="$(cd "$root" && gh pr list --head "$2" --base "$1" --state merged --json url --jq '.[0].url' 2>/dev/null)"
+  [ -n "$url" ] || return 0
+  G merge-base --is-ancestor "$2" "refs/remotes/origin/$1" 2>/dev/null && return 0
+  fail "$url was merged, but $1 does not contain $2 — it was squashed or rebased, not merged with a merge commit; merge $2 into $1 with a merge commit by hand"
+}
+
+# open_pr <base> <head> <title> <body>: make sure a PR from <head> into
+# <base> is open, and print its URL in an ok: line. An open one is reused
+# (a re-run must not open a second); else gh creates it. The caller pushed
+# <head> first. Returns 1 when gh could not create it.
+open_pr() {
+  local url
+  url="$(cd "$root" && gh pr list --head "$2" --base "$1" --state open --json url --jq '.[0].url' 2>/dev/null)"
+  if [ -n "$url" ]; then echo "ok: PR already open: $url"; return 0; fi
+  url="$(cd "$root" && gh pr create --base "$1" --head "$2" --title "$3" --body "$4" 2>/dev/null)" || return 1
+  echo "ok: opened PR $url"
 }
 
 # production_branch: where releases land and get tagged. git-flow's own
