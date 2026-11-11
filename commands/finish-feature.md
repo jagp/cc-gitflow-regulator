@@ -70,9 +70,16 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-feature.sh" finish <branch> [--keep-b
 Relay the script's summary lines. Exit codes:
 
 - `0` — finished; report merge commit, whether the base was pushed to origin
-  (or that no origin exists / pushing is switched off), and what was/wasn't
-  cleaned up
-- `2` — refused by a preflight guard; report the reason verbatim, fix nothing
+  (or that no origin exists / the merge mode is `local`), and what was/wasn't
+  cleaned up. Exception: with `gitflow.feature.merge` /
+  `CC_GITFLOW_REGULATOR_FEATURE_MERGE` set to `pr`, a `next:` line means
+  finish stopped at an open PR into the base (nothing merged, worktree and
+  branch kept). Relay the PR URL and the `next:` line, stress merging it
+  **with a merge commit**, and stop; never merge it yourself. After the user
+  merges it, `/finish-feature <branch>` again only cleans up
+- `2` — refused by a preflight guard (in `pr` mode also: no origin, no
+  working `gh`, a PR GitHub squash/rebase merged; or an unknown merge mode);
+  report the reason verbatim, fix nothing
 - `3` — merge conflicted; nothing was merged and the base was not pushed. The
   script pushed the feature branch to origin and opened a PR into the base
   instead. This is the normal two-step conflict process, not a

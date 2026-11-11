@@ -79,10 +79,11 @@ All optional, via environment variables (e.g. the `"env"` block in
 | ------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `CC_GITFLOW_REGULATOR_PREFIX`         | `feature/`                | Branch prefix for renamed worktree branches                                                                                                      |
 | `CC_GITFLOW_REGULATOR_BASE`           | auto                      | Base branch to fork from. Auto-detect order: `develop`, `dev`, `origin/develop`, `origin/dev`. If none exist, worktrees keep their default base. |
-| `CC_GITFLOW_REGULATOR_PUSH_MERGED`    | on                        | `/finish-feature` and `/finish-release` push the merged branches to origin after merging. Set `0` (or `false`/`off`/`no`) to keep merges local.                          |
+| `CC_GITFLOW_REGULATOR_FEATURE_MERGE`  | `push`                    | How `/finish-feature` lands a feature on its base: `push` merges here and pushes the base, `local` merges here and pushes nothing, `pr` pushes the branch and opens a GitHub PR instead. |
+| `CC_GITFLOW_REGULATOR_RELEASE_MERGE`  | `pr`                      | How `/finish-release` and `/finish-hotfix` land on `main`: same three values. The highest-stakes merge, so it waits for a PR by default. |
+| `CC_GITFLOW_REGULATOR_BACK_MERGE`     | `push`                    | How a finished release or hotfix is merged back into `develop` (or the open `release/*`): same three values; its PR goes from `main`. |
 | `CC_GITFLOW_REGULATOR_CHANGELOG`      | on                        | Release commands draft, require and date a `CHANGELOG.md` entry. `0` turns that off; release notes then come from the commit list.            |
 | `CC_GITFLOW_REGULATOR_GH_RELEASE`     | on                        | Publishing a release also creates its GitHub Release page with `gh`. `0` turns that off.                                                        |
-| `CC_GITFLOW_REGULATOR_RELEASE_PR`     | off                       | `/finish-release` and `/finish-hotfix` land on `main` through a GitHub PR instead of merging locally. `1` (or `true`/`on`/`yes`) turns it on; needs `gh`. |
 
 ## Starting a branch: `/start-feature`
 
@@ -152,7 +153,11 @@ clean, and what cleanup will do), then:
    `/start-feature` recorded, else `CC_GITFLOW_REGULATOR_BASE`, else
    `develop`/`dev`.
 4. **Pushes the base to origin** (plain push, never forced). With no origin
-   it says so; `CC_GITFLOW_REGULATOR_PUSH_MERGED=0` keeps the merge local.
+   it says so; `CC_GITFLOW_REGULATOR_FEATURE_MERGE=local` keeps the merge
+   local. With it set to `pr`, steps 3 and 4 are replaced by a PR: finish
+   pushes the branch, opens a PR into the base and stops, leaving the
+   worktree alone; after you merge the PR (with a merge commit), running
+   `/finish-feature <branch>` again only cleans up.
    A rejected push is reported and the run ends incomplete.
 5. **On conflict**, nothing is merged or pushed to the base. Instead it pushes
    the feature branch and opens a PR into the base. Once the PR is merged,
@@ -225,10 +230,11 @@ is open.
 tests, a missing changelog entry, or a manifest at another version. It warns
 (without blocking) about files still naming the previous version, changed
 files no test change mentions, and commits that are on `main` but not
-`develop`. Then it dates the entry, merges into `main` with `--no-ff`, tags
-`v<version>`, merges the tag back into `develop`, pushes both branches,
-deletes the release branch, and cleans up feature branches that were waiting
-for it. A hotfix is merged back into an open release branch if there is one,
+`develop`. Then it dates the entry and lands the release on `main`: by
+default through a PR (see Merge modes below), or with a local `--no-ff`
+merge. After that it tags `v<version>`, merges the tag back into `develop`,
+pushes, deletes the release branch, and cleans up feature branches that
+were waiting for it. A hotfix is merged back into an open release branch if there is one,
 so the release can't ship without the fix.
 
 A conflict stops the run and changes nothing half-way. Resolve it (for a
@@ -236,17 +242,16 @@ conflict with `main`, the command offers to merge `main` into the release
 branch so you can resolve it there) and run the command again; every step
 that already happened is skipped.
 
-**Landing through a PR.** With `CC_GITFLOW_REGULATOR_RELEASE_PR=1` (or
-`git config gitflow.release.pr true` for one repo), finish never merges
-into `main` itself. After the checks, tests and changelog date, it pushes
-the release branch, opens a PR into `main` and stops. Merge that PR **with a
-merge commit**, then run the command again: it fetches the merge, tags it,
-merges back into `develop`, pushes `develop` and cleans up. A squash or
-rebase merge copies the commits instead of merging them, so `main` never
-contains the branch; finish refuses that case rather than tagging a guess.
-Without `gh` (installed and logged in) or an origin remote, finish refuses
-instead of falling back to a local merge. The merge back into `develop` is
-still pushed directly, as with features.
+**Merge modes.** Each of the merges a release makes has its own setting,
+taking `pr`, `push` or `local` (see the table above). By default the merge
+into `main` goes through a PR and the merge back into `develop` is done here
+and pushed. A `pr` stage pushes, opens the PR (or finds the open one) and
+stops; merge the PR **with a merge commit**, then run the command again. It
+fetches the merge and carries on: tag, merge back, push, clean up. A squash
+or rebase merge copies the commits instead of merging them, so git can't
+see the branch landed; finish refuses that case rather than tagging a guess.
+A `pr` stage without `gh` (installed and logged in) or an origin remote
+refuses instead of falling back to a local merge.
 
 **Publishing.** The command then asks before pushing the tag. On yes it
 pushes it, creates the GitHub Release page with the changelog entry as notes
@@ -257,8 +262,8 @@ Nothing is sent anywhere.
 
 Per-repo switches (git config) mirror the variables above:
 `gitflow.release.changelog false`, `gitflow.release.githubRelease false`,
-`gitflow.release.pushMerged false`, and the off-by-default
-`gitflow.release.pr true`.
+`gitflow.feature.merge`, `gitflow.release.merge`,
+`gitflow.release.backMerge` (each `pr`, `push` or `local`).
 
 **Tests.** The commands find a project's tests on their own: `npm`/`pnpm`/
 `yarn`/`bun` `test` scripts, pytest, `cargo test`, `go test`, a Makefile

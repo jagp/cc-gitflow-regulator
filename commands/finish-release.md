@@ -33,16 +33,16 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-release.sh" <type> finish
 Exit codes:
 
 - `0`: landed. Relay the `ok:` lines, then handle the `ask:` lines (step 3).
-  Exception, the PR route (`gitflow.release.pr` / `CC_GITFLOW_REGULATOR_RELEASE_PR`
-  on): a `next:` line means nothing landed yet. finish pushed the branch and
-  opened (or found) a PR into main. Relay the PR URL and the `next:` line,
-  stress that the PR must be merged **with a merge commit** (not squash or
-  rebase), and stop. Never merge the PR yourself. Once the user has merged
-  it, running `/finish-<type>` again continues from the tag.
+  Exception, a merge stage in `pr` mode (`gitflow.release.merge`, default
+  `pr`, for the merge into main; `gitflow.release.backMerge` for the merge
+  back): a `next:` line means finish stopped at an open PR. Relay the PR URL
+  and the `next:` line, stress that the PR must be merged **with a merge
+  commit** (not squash or rebase), and stop. Never merge the PR yourself.
+  Once the user has merged it, running `/finish-<type>` again carries on.
 - `2`: refused (dirty tree, failing tests, no changelog entry, a manifest at
-  another version, a tag that marks something else; on the PR route also no
-  origin, no working `gh`, or a PR that was squash/rebase merged). Report
-  verbatim, fix nothing.
+  another version, a tag that marks something else; for a `pr` stage also no
+  origin, no working `gh`, or a PR that was squash/rebase merged; an unknown
+  merge mode). Report verbatim, fix nothing.
 - `3`: a merge conflicted. Nothing half-done is left behind, and running
   finish again later skips every step that already happened.
   - With `ask: sync-main`: the merge into main conflicts. Ask
