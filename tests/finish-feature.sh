@@ -44,8 +44,8 @@ fin finish feature/s >/dev/null 2>&1
 check "re-run from the main checkout cleans up" 'gone feature/s && [ ! -e $W/s ]'
 
 # --- pushing the base ---------------------------------------------------------------
-fresh; wt p 2>/dev/null; CC_GITFLOW_REGULATOR_PUSH_MERGED=0 fin finish feature/p >/dev/null 2>&1
-check "PUSH_MERGED=0 leaves origin/develop alone" '[ "$(git -C ../origin.git rev-parse develop)" != "$(git rev-parse develop)" ]'
+fresh; wt p 2>/dev/null; CC_GITFLOW_REGULATOR_FEATURE_MERGE=local fin finish feature/p >/dev/null 2>&1
+check "merge mode local leaves origin/develop alone" '[ "$(git -C ../origin.git rev-parse develop)" != "$(git rev-parse develop)" ]'
 
 fresh; git remote remove origin; wt n 2>/dev/null; out="$(fin finish feature/n 2>&1)"
 check "no origin: says it checked" 'echo "$out" | grep -q "none configured"'
@@ -73,6 +73,29 @@ git clone -q ../origin.git ../other 2>/dev/null
 (cd ../other && git switch -q feature/t && git commit -q --allow-empty -m theirs && git push -q)
 out="$(fin finish feature/t 2>&1)"
 check "someone else's commits on origin: no offer" '! echo "$out" | grep -q "^ask:" && echo "$out" | grep -q "never had"'
+
+# --- merge mode pr (CC_GITFLOW_REGULATOR_FEATURE_MERGE / gitflow.feature.merge) -----------------
+fake_gh
+fresh; reset_gh; wt q 2>/dev/null; git config gitflow.feature.merge pr; develop_before="$(git rev-parse develop)"
+out="$(fin plan feature/q 2>&1)"
+check "mode pr: plan says the merge goes through a PR" 'echo "$out" | grep -q "plan: merge         via a PR"'
+out="$(fin finish feature/q 2>&1)"
+check "mode pr: finish pushes the branch, opens a PR into develop and stops"   'echo "$out" | grep -q exit=0 && grep -q "^gh pr create --base develop --head feature/q" "$SCRATCH_LOG" && echo "$out" | grep -q "^next: .*merge commit" && [ "$(git ls-remote origin refs/heads/feature/q | cut -f1)" = "$(git rev-parse feature/q)" ]'
+check "mode pr: develop untouched, branch and worktree kept"   '[ "$(git rev-parse develop)" = "$develop_before" ] && [ "$(git ls-remote origin refs/heads/develop | cut -f1)" = "$develop_before" ] && ! gone feature/q && [ -d $W/q ]'
+out="$(fin finish feature/q 2>&1)"
+check "mode pr: a re-run while the PR is open opens no second PR" '[ "$(grep -c "^gh pr create" "$SCRATCH_LOG")" = 1 ] && echo "$out" | grep -q "already open"'
+merge_on_origin merge develop feature/q
+out="$(fin finish feature/q 2>&1)"
+check "mode pr: after the merge, finish catches develop up and cleans up"   'echo "$out" | grep -q exit=0 && gone feature/q && [ ! -e $W/q ] && git merge-base --is-ancestor "$(git ls-remote origin refs/heads/develop | cut -f1)" develop && echo "$out" | grep -q "happened on GitHub"'
+fresh; reset_gh; wt v 2>/dev/null; git config gitflow.feature.merge pr; fin finish feature/v >/dev/null 2>&1
+merge_on_origin squash develop feature/v
+out="$(fin finish feature/v 2>&1)"
+check "mode pr: a squash-merged PR refuses and keeps the branch" 'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "squashed or rebased" && ! gone feature/v'
+fresh; reset_gh; wt u 2>/dev/null; git config gitflow.feature.merge pr
+out="$(GH_STUB_EXIT=1 fin finish feature/u 2>&1)"
+check "mode pr: gh unusable refuses before pushing" 'echo "$out" | grep -q exit=2 && ! git ls-remote --exit-code origin refs/heads/feature/u >/dev/null && ! gone feature/u'
+fresh; wt y 2>/dev/null; git config gitflow.feature.merge sideways
+check "an unknown merge mode refuses" 'fin finish feature/y 2>&1 | grep -q "expected pr, push or local"'
 
 echo "$failures failure(s)"
 [ "$failures" = 0 ]

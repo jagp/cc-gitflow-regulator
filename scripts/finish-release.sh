@@ -8,6 +8,16 @@
 #   finish     check, then land: merge into the production branch, tag,
 #              merge back, push the branches, clean up. Ends with
 #              `ask: push-tag v<version>`; the tag is never pushed here.
+#
+# Each of the two merges has its own mode (common.sh merge_mode): pr, push
+# or local.
+#   into production  CC_GITFLOW_REGULATOR_RELEASE_MERGE / gitflow.release.merge,
+#                    default pr: the highest-stakes merge waits for a PR
+#   merge back       CC_GITFLOW_REGULATOR_BACK_MERGE / gitflow.release.backMerge,
+#                    default push; its PR goes from production (carrying the
+#                    production merge along, like the tag merge does)
+# A pr stage pushes, opens the PR and stops with `next:`. Once GitHub merges
+# it WITH A MERGE COMMIT, finish again fetches that merge and carries on.
 #   sync-main  after a conflict merging into production: merge production
 #              into the release/hotfix branch so the conflict can be resolved
 #              there, then run finish again
@@ -24,7 +34,7 @@
 #            next release cannot ship without the fix
 #
 # Exit codes: 0 ok   2 refused   3 merge conflict   4 cleanup incomplete
-# Configuration: CC_GITFLOW_REGULATOR_BASE, CC_GITFLOW_REGULATOR_PUSH_MERGED,
+# Configuration: CC_GITFLOW_REGULATOR_BASE, the two merge modes above,
 #   CC_GITFLOW_REGULATOR_CHANGELOG / gitflow.release.changelog,
 #   CC_GITFLOW_REGULATOR_GH_RELEASE / gitflow.release.githubRelease,
 #   gitflow.testCommand
@@ -120,6 +130,25 @@ fi
 # The previous release: the version sweep looks for it, ranges start at it.
 previous_tag="$(last_release_tag "$production")"
 since="${previous_tag:+$previous_tag..}"
+
+# --- merge modes (see the header) --------------------------------------------------------------
+production_mode="$(merge_mode CC_GITFLOW_REGULATOR_RELEASE_MERGE gitflow.release.merge pr)" || exit 2
+back_mode="$(merge_mode CC_GITFLOW_REGULATOR_BACK_MERGE gitflow.release.backMerge push)" || exit 2
+# The merge-back PR comes FROM production, so production must reach origin.
+[ "$production_mode:$back_mode" != local:pr ] \
+  || fail "gitflow.release.backMerge=pr opens its PR from $production, which gitflow.release.merge=local never pushes — set release.merge to push or pr"
+
+# --- catch up with merges made on GitHub ------------------------------------------------------
+# A pr stage's merge happens on GitHub, so the local copy of its target is
+# stale until fetched. finish fetches and fast-forwards those targets FIRST,
+# so the landing state below sees the PR's merge and skips that step.
+# (plan stays read-only: no fetch. A target checked out in another checkout
+# is not moved here; the preflight below refuses that by name.)
+if [ "$mode" = finish ] && [ "$has_origin" = 1 ] && [ "$production_mode" = pr -o "$back_mode" = pr ]; then
+  G fetch -q --prune origin 2>/dev/null || echo "warn: fetch from origin failed (offline?) — checking against the refs already here"
+  [ "$production_mode" = pr ] && fast_forward_to_origin "$production" && echo "ok: fast-forwarded $production from origin"
+  [ "$back_mode" = pr ] && fast_forward_to_origin "$merge_back_into" && echo "ok: fast-forwarded $merge_back_into from origin"
+fi
 
 # --- landing state (what is already done) -----------------------------------------------------
 # landed: the branch's work is in production. A tag that exists must sit on a
@@ -231,10 +260,15 @@ if [ "$mode" = plan ]; then
   state() { if [ "$1" = 1 ]; then echo done; else echo "will do"; fi; }
   echo "plan: $branch_type $branch -> $production (tag $tag), then -> $merge_back_into"
   [ "$landed" = 1 ] || echo "plan: tests: run on $branch before merging"
-  echo "plan: merge into $production: $(state "$landed")"
+  # via_pr_or_state <done> <stage mode> <head>: a pending pr stage says so.
+  via_pr_or_state() {
+    if [ "$1" = 0 ] && [ "$2" = pr ]; then echo "via a PR from $3 — merge it with a merge commit, then finish again"
+    else state "$1"; fi
+  }
+  echo "plan: merge into $production ($production_mode): $(via_pr_or_state "$landed" "$production_mode" "$branch")"
   echo "plan: tag $tag: $(state "$tagged")"
-  echo "plan: merge back into $merge_back_into: $(state "$merged_back")"
-  echo "plan: then push $production and $merge_back_into, delete $branch, and ask before pushing $tag"
+  echo "plan: merge back into $merge_back_into ($back_mode): $(via_pr_or_state "$merged_back" "$back_mode" "$production")"
+  echo "plan: then push what the modes say, delete $branch, and ask before pushing $tag"
   exit 0
 fi
 
@@ -257,6 +291,20 @@ if [ "$landed" = 0 ] && [ "$has_origin" = 1 ]; then
     [ "$behind" = 0 ] || fail "$needed is behind origin by $behind commit(s) — bring it up to date (git pull on $needed) and run finish again"
   done
 fi
+# 3. Pending pr stages, checked before tests run or anything is pushed: a pr
+#    stage REQUIRES its PR (no origin or no working gh refuses, never falls
+#    back to merging here), and a PR GitHub squashed would leave nothing to
+#    tag (common.sh refuse_squashed_pr). The merge-back PR targets origin's
+#    copy of the merge-back branch, so that copy must exist.
+if [ "$production_mode" = pr ] && [ "$landed" = 0 ]; then
+  require_pr_tools CC_GITFLOW_REGULATOR_RELEASE_MERGE
+  refuse_squashed_pr "$production" "$branch"
+fi
+if [ "$back_mode" = pr ] && [ "$merged_back" = 0 ]; then
+  require_pr_tools CC_GITFLOW_REGULATOR_BACK_MERGE
+  has_ref "refs/remotes/origin/$merge_back_into" \
+    || fail "gitflow.release.backMerge=pr needs $merge_back_into on origin to open the PR into — push it, or set backMerge to push or local"
+fi
 
 # ============================== finish: land ==================================================
 # 1. On the branch: run the tests, then finish the changelog entry.
@@ -273,6 +321,22 @@ if [ "$landed" = 0 ]; then
       W commit -q -m "docs(changelog): date $version" && echo "ok: dated the $version changelog entry"
     fi
   fi
+  # 2a. production_mode pr: production is merged on GitHub, not here.
+  #     - push the branch (on a re-run, that updates the open PR)
+  #     - open the PR into production, or reuse the open one
+  #     - stop: the merge must be a MERGE COMMIT so production contains the
+  #       branch; the next finish fetches it and carries on from step 3
+  if [ "$production_mode" = pr ]; then
+    G push -q origin "$branch" 2>/dev/null || fail "could not push $branch to origin"
+    case "$branch_type" in release) pr_title="Release $version" ;; *) pr_title="Hotfix $version" ;; esac
+    open_pr "$production" "$branch" "$pr_title" "$(release_notes "$version" "$branch" "$since$branch")
+
+---
+Opened by \`/finish-$branch_type\`. **Merge this with a merge commit** (not squash or rebase), then run \`/finish-$branch_type\` again: it tags the merge as \`$tag\` and carries on." \
+      || fail "gh pr create failed — $branch is pushed; open a PR into $production by hand"
+    echo "next: merge the PR with a merge commit (not squash or rebase), then run finish again to tag $tag and carry on"
+    exit 0
+  fi
   # 2. Merge into production. A conflict aborts the merge and changes nothing.
   W switch -q "$production" || fail "could not switch to $production"
   if ! W merge -q --no-ff -m "Merge branch '$branch'" "$branch" >/dev/null 2>&1; then
@@ -288,6 +352,24 @@ if [ "$tagged" = 0 ]; then
   G tag -a "$tag" -m "$tag" -m "$(release_notes "$version" "$branch" "$since$branch")" "$production" \
     || fail "could not create tag $tag"
   echo "ok: tagged $production as $tag (local)"
+fi
+# 4a. back_mode pr: the merge back happens on GitHub, as a PR FROM
+#     production (so it carries the tagged production merge along, the same
+#     result as the tag merge in 4). Production goes to origin first when
+#     its own mode is push (pr: it is there already). The branch is kept:
+#     the next finish finds the release by it, sees the merge back done,
+#     and pushes and cleans up.
+if [ "$merged_back" = 0 ] && [ "$back_mode" = pr ]; then
+  if [ "$production_mode" = push ]; then
+    G push -q origin "$production" 2>/dev/null || fail "could not push $production — the PR into $merge_back_into needs it on origin"
+    echo "ok: pushed $production to origin"
+  fi
+  W switch -q "$branch" 2>/dev/null
+  open_pr "$merge_back_into" "$production" "Merge $production into $merge_back_into ($tag)" \
+    "Opened by \`/finish-$branch_type\`: brings \`$tag\` back into \`$merge_back_into\`. **Merge this with a merge commit**, then run \`/finish-$branch_type\` again to push and clean up." \
+    || fail "gh pr create failed — open a PR from $production into $merge_back_into by hand"
+  echo "next: merge the PR with a merge commit (not squash or rebase), then run finish again to push and clean up ($tag stays local until publish)"
+  exit 0
 fi
 # 4. Merge back. A conflict aborts; production and the tag stay as they are.
 if [ "$merged_back" = 0 ]; then
@@ -307,19 +389,23 @@ if [ "$merged_back" = 0 ]; then
 fi
 W switch -q "$merge_back_into" 2>/dev/null
 
-# 5. Push the branches (never the tag here).
+# 5. Push the branches whose stage is in push mode (never the tag here; a pr
+#    stage's target already matches origin, a local one stays local):
+#    - production
+#    - the merge-back branch, when it is the integration branch or already on
+#      origin: a hotfix merged into a release branch nobody pushed yet does
+#      not publish that release branch
+#    --atomic: all or none.
+push_list=""
+[ "$production_mode" = push ] && push_list="$production"
+if [ "$back_mode" = push ] && { [ "$merge_back_into" = "$integration" ] || has_ref "refs/remotes/origin/$merge_back_into"; }; then
+  push_list="${push_list:+$push_list }$merge_back_into"
+fi
 if [ "$has_origin" = 0 ]; then
   echo "ok: nothing pushed — no origin remote"
-elif ! switch_on CC_GITFLOW_REGULATOR_PUSH_MERGED gitflow.release.pushMerged; then
-  echo "ok: nothing pushed (CC_GITFLOW_REGULATOR_PUSH_MERGED is off)"
+elif [ -z "$push_list" ]; then
+  echo "ok: nothing to push (merge modes: into $production $production_mode, back $back_mode)"
 else
-  # Push production, plus the merge-back branch when it is the integration
-  # branch or already on origin: a hotfix merged into a release branch nobody
-  # pushed yet does not publish that release branch. --atomic: all or none.
-  push_list="$production"
-  if [ "$merge_back_into" = "$integration" ] || has_ref "refs/remotes/origin/$merge_back_into"; then
-    push_list="$push_list $merge_back_into"
-  fi
   if G push -q --atomic origin $push_list 2>/dev/null; then
     echo "ok: pushed $push_list to origin"
   else
@@ -345,7 +431,7 @@ if [ "$branch_type" = release ]; then
   G for-each-ref --format='%(refname:short)' "refs/heads/" | while read -r held; do
     [ "$(G config --get "gitflow.branch.$held.base" 2>/dev/null)" = "$branch" ] || continue
     echo "ok: cleaning up $held (it was held for $branch)"
-    CC_GITFLOW_REGULATOR_PUSH_MERGED=0 bash "$PLUGIN_SCRIPTS/finish-feature.sh" finish "$held" 2>&1 | sed 's/^/  /'
+    CC_GITFLOW_REGULATOR_FEATURE_MERGE=local bash "$PLUGIN_SCRIPTS/finish-feature.sh" finish "$held" 2>&1 | sed 's/^/  /'
   done
 fi
 

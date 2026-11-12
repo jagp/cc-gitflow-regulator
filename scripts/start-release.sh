@@ -109,20 +109,18 @@ if [ "$branch_type" = release ]; then
   if has_ref "refs/remotes/origin/$integration"; then
     behind="$(G rev-list --count "$integration..origin/$integration")"
     ahead="$(G rev-list --count "origin/$integration..$integration")"
-    # Strictly behind: fast-forward — but a branch checked out in ANOTHER
-    # checkout can't be moved safely (its files would go stale and the next
-    # commit there would undo the new commits), so that case only warns.
-    integration_folder="$(checked_out_at "$integration")"
+    # Strictly behind: fast-forward (common.sh fast_forward_to_origin) — but a
+    # branch checked out in ANOTHER checkout can't be moved safely, so that
+    # case only warns.
     if [ "$behind" != 0 ] && [ "$ahead" = 0 ]; then
       if [ "$mode" = plan ]; then
         echo "plan: $integration is $behind commit(s) behind origin — start will fast-forward it"
-      elif [ -z "$integration_folder" ]; then
-        G update-ref "refs/heads/$integration" "refs/remotes/origin/$integration" \
-          && echo "ok: fast-forwarded $integration from origin"
-      elif same_folder "$integration_folder" "$here"; then
-        W merge -q --ff-only "origin/$integration" && echo "ok: fast-forwarded $integration from origin"
       else
-        echo "warn: $integration is behind origin by $behind commit(s) but checked out at $integration_folder — releasing local $integration; pull it there first if those commits belong in this release"
+        fast_forward_to_origin "$integration"
+        case $? in
+          0) echo "ok: fast-forwarded $integration from origin" ;;
+          2) echo "warn: $integration is behind origin by $behind commit(s) but checked out at $(checked_out_at "$integration") — releasing local $integration; pull it there first if those commits belong in this release" ;;
+        esac
       fi
     elif [ "$behind" != 0 ]; then
       echo "warn: $integration has diverged from origin ($ahead ahead, $behind behind) — releasing local $integration"

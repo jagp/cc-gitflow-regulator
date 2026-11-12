@@ -7,9 +7,12 @@
 #                     created, no fetch)
 #   finish <branch> [--keep-branch] [--stash-changes|--discard-changes] [--kill-stalled-session]
 #                     merge <branch> into the gitflow base with --no-ff, then
-#                     push the base to origin (CC_GITFLOW_REGULATOR_PUSH_MERGED=0
-#                     turns that off). On conflict: abort, push the branch and
-#                     open a PR instead. Then the worktree is removed and
+#                     push the base to origin — per the feature merge mode
+#                     (CC_GITFLOW_REGULATOR_FEATURE_MERGE / gitflow.feature.merge):
+#                     push (default), local (no push), or pr (push the branch,
+#                     open a PR into the base, stop; a re-run after the PR is
+#                     merged cleans up). On conflict: abort, push the branch
+#                     and open a PR instead. Then the worktree is removed and
 #                     the local branch deleted, unless:
 #                       --keep-branch    keep the worktree and the local branch
 #                     Leftover (uncommitted/untracked) files in the worktree make
@@ -33,8 +36,8 @@
 # contract (rename hook): .claude/worktrees/<name> <-> <prefix><name>.
 #
 # What reaches origin, exactly:
-#   - pushed:  the base branch after a clean merge (CC_GITFLOW_REGULATOR_PUSH_MERGED=0
-#              turns this off); the feature branch on a merge conflict, for its PR
+#   - pushed:  the base branch after a clean merge (feature merge mode push);
+#              the feature branch for its PR (mode pr, or a merge conflict)
 #   - deleted: origin/<branch> only via the delete-remote mode, which the
 #              /finish-feature command runs only after the user says yes to the
 #              `ask: delete-remote` line, and only if origin hasn't moved
@@ -49,7 +52,8 @@
 #   4 cleanup incomplete
 #
 # Configuration: CC_GITFLOW_REGULATOR_PREFIX, CC_GITFLOW_REGULATOR_BASE (same as hooks),
-# CC_GITFLOW_REGULATOR_PUSH_MERGED (default on; 0 keeps the merge local),
+# CC_GITFLOW_REGULATOR_FEATURE_MERGE / gitflow.feature.merge (pr | push | local,
+# default push),
 # CC_GITFLOW_REGULATOR_JOBS_DIR (job-state location; default ~/.claude/jobs — meant
 # for tests).
 set -u
@@ -58,11 +62,6 @@ mode="${1:-}"; shift 2>/dev/null || true
 PREFIX="${CC_GITFLOW_REGULATOR_PREFIX:-feature/}"
 BASE_OVERRIDE="${CC_GITFLOW_REGULATOR_BASE:-}"
 JOBS_DIR="${CC_GITFLOW_REGULATOR_JOBS_DIR:-$HOME/.claude/jobs}"
-# Push the merged base to origin unless switched off (0/false/off/no).
-case "$(printf '%s' "${CC_GITFLOW_REGULATOR_PUSH_MERGED:-1}" | tr '[:upper:]' '[:lower:]')" in
-  0|false|off|no) push_merged=0 ;;
-  *) push_merged=1 ;;
-esac
 
 # delete-remote takes two positionals (branch, sha) and no flags: take them
 # here so the flag loop below sees nothing.
@@ -91,13 +90,13 @@ case "$mode" in plan|finish|delete-remote) ;; *)
   exit 2 ;;
 esac
 
-fail() { echo "error: $*" >&2; exit 2; }
-
-# --- main checkout root (works when invoked from a worktree) ----------------
-common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
-  || fail "not inside a git repository"
-root="${common%/.git}"
-G() { git -C "$root" "$@"; }
+# Shared helpers (fail, G, root = the main checkout even from a worktree,
+# merge modes and the PR steps); see the list at the top of common.sh.
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+# How the merge into the base lands (common.sh merge_mode): push (default)
+# merges here and pushes the base, local merges and pushes nothing, pr opens
+# a PR into the base and stops.
+feature_mode="$(merge_mode CC_GITFLOW_REGULATOR_FEATURE_MERGE gitflow.feature.merge push)" || exit 2
 
 # ============================== delete-remote ================================
 # Run only after the user said yes to an `ask: delete-remote <branch> <sha>`
@@ -202,6 +201,14 @@ if [ "$branch_is_remote_only" = "1" ]; then
   fi
 fi
 
+# Feature merge mode pr: the merge happens on GitHub, so the local base is
+# stale until fetched. finish fetches and fast-forwards it (in the main
+# checkout, where finish merges) BEFORE counting, so a PR GitHub already
+# merged counts as merged and finish goes straight to the cleanup.
+if [ "$feature_mode" = pr ] && [ "$mode" = finish ] && G remote get-url origin >/dev/null 2>&1; then
+  G fetch -q --prune origin 2>/dev/null || echo "warn: fetch from origin failed (offline?) — checking against the refs already here"
+  here="$root" fast_forward_to_origin "$base" && echo "ok: fast-forwarded $base from origin"
+fi
 ahead="$(G rev-list --count "$base..$merge_ref" 2>/dev/null || echo 0)"
 
 # --- locate the worktree holding the branch ---------------------------------
@@ -347,6 +354,8 @@ if [ "$mode" = "plan" ]; then
   fi
   if [ "$ahead" = "0" ]; then
     echo "plan: merge         nothing to merge (already in $base) — finish = cleanup only"
+  elif [ "$feature_mode" = pr ]; then
+    echo "plan: merge         via a PR (gitflow.feature.merge=pr) — finish pushes $branch and opens a PR into $base; merge it with a merge commit, then finish again"
   elif G merge-tree --write-tree "$base" "$merge_ref" >/dev/null 2>&1; then
     echo "plan: merge         clean --no-ff merge into $base expected"
   elif G merge-tree --write-tree "$base" "$merge_ref" 2>/dev/null | grep -q .; then
@@ -354,8 +363,10 @@ if [ "$mode" = "plan" ]; then
   else
     echo "plan: merge         conflict prediction unavailable (git < 2.38) — finish will try and abort safely"
   fi
-  if [ "$push_merged" = "0" ]; then
-    echo "plan: push          off (CC_GITFLOW_REGULATOR_PUSH_MERGED) — $base stays local"
+  if [ "$feature_mode" = local ]; then
+    echo "plan: push          off (gitflow.feature.merge=local) — $base stays local"
+  elif [ "$feature_mode" = pr ]; then
+    echo "plan: push          $branch only, for its PR — $base is merged on GitHub"
   elif G remote get-url origin >/dev/null 2>&1; then
     echo "plan: push          finish will push $base to origin after the merge"
   else
@@ -388,6 +399,27 @@ fi
   && fail "main checkout has uncommitted changes — commit or stash them first"
 G rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
   && fail "main checkout has a merge in progress"
+
+# Phase 1b: feature merge mode pr, with work still to merge. The merge into
+# the base happens on GitHub, so nothing is released or removed here:
+#   1. refuse without origin or a logged-in gh, or when GitHub already
+#      squashed a PR of this branch (common.sh)
+#   2. push the branch (on a re-run, that updates the open PR)
+#   3. open the PR into the base, or reuse the open one
+#   4. stop. Once the PR is merged with a merge commit, a re-run sees the
+#      branch inside the base (ahead = 0) and only cleans up.
+# The worktree and its files stay as they are: uncommitted work is not in
+# the PR, but nothing is lost either.
+if [ "$feature_mode" = pr ] && [ "$ahead" != "0" ]; then
+  require_pr_tools CC_GITFLOW_REGULATOR_FEATURE_MERGE
+  refuse_squashed_pr "$base" "$branch"
+  G push -q -u origin "$branch" 2>/dev/null || fail "could not push $branch to origin"
+  open_pr "$base" "$branch" "Merge $branch into $base" \
+    "Opened by \`/finish-feature\`. **Merge this with a merge commit** (not squash or rebase), then run \`/finish-feature $branch\` again: it removes the worktree, deletes the local branch, and asks whether to delete this branch on origin too." \
+    || fail "gh pr create failed — $branch is pushed; open a PR into $base by hand"
+  echo "next: merge the PR with a merge commit (not squash or rebase), then run /finish-feature $branch again to clean up"
+  exit 0
+fi
 # Leftovers in the worktree (uncommitted or untracked files) are checked
 # BEFORE the merge, so forgotten work can still be committed and merged.
 # The script cannot tell which kind of leftover it is looking at, so it only
@@ -447,16 +479,13 @@ else
   printf '%s\n' "$conflicts" | sed 's/^/conflict:   /'
   if G remote get-url origin >/dev/null 2>&1; then
     G push -u origin "$branch" || fail "conflict + push failed — resolve manually"
-    if command -v gh >/dev/null 2>&1; then
-      pr_body="Opened by /finish-feature: the local --no-ff merge of \`$branch\` into \`$base\` hit conflicts, so the finish switched to the PR route.
-
-**When this PR is merged, the finish is not done yet** — run \`/finish-feature $branch\` again to resume it. The command will detect the branch is now contained in \`$base\` and complete the remaining steps: remove the worktree, delete the local branch, and ask whether to delete this branch on origin too."
-      url="$(cd "$root" && gh pr create --base "$base" --head "$branch" \
-        --title "Merge $branch into $base" \
-        --body "$pr_body" 2>/dev/null)"
-      [ -n "$url" ] && echo "conflict: PR opened: $url" || echo "conflict: branch pushed; open the PR manually (gh pr create failed)"
-    else
+    if ! command -v gh >/dev/null 2>&1; then
       echo "conflict: branch pushed to origin; open a PR into $base manually (gh not installed)"
+    elif ! open_pr "$base" "$branch" "Merge $branch into $base" \
+        "Opened by /finish-feature: the local --no-ff merge of \`$branch\` into \`$base\` hit conflicts, so the finish switched to the PR route.
+
+**When this PR is merged, the finish is not done yet** — run \`/finish-feature $branch\` again to resume it. The command will detect the branch is now contained in \`$base\` and complete the remaining steps: remove the worktree, delete the local branch, and ask whether to delete this branch on origin too."; then
+      echo "conflict: branch pushed; open the PR manually (gh pr create failed)"
     fi
     echo "conflict: branch and worktree left intact — re-run /finish-feature $branch after the PR merges to resume"
     [ -n "${stash_sha:-}" ] && echo "conflict: the worktree's leftovers are in stash $stash_sha, not in the worktree (git stash apply $stash_sha to bring them back)"
@@ -470,9 +499,13 @@ incomplete=0
 
 # Phase 3b: publish the merged base to origin, so the merge exists off this
 # machine. Plain push only: if origin has moved, the push is rejected and we
-# report it — never force. Off when CC_GITFLOW_REGULATOR_PUSH_MERGED=0.
-if [ "$push_merged" = "0" ]; then
-  echo "ok: $base not pushed (CC_GITFLOW_REGULATOR_PUSH_MERGED is off)"
+# report it — never force. Only in feature merge mode push: local keeps the
+# merge here, and in pr mode reaching this point means GitHub did the merge
+# (Phase 1b stopped otherwise), so origin has it already.
+if [ "$feature_mode" = local ]; then
+  echo "ok: $base not pushed (gitflow.feature.merge=local)"
+elif [ "$feature_mode" = pr ]; then
+  echo "ok: nothing to push — the merge into $base happened on GitHub"
 elif ! G remote get-url origin >/dev/null 2>&1; then
   echo "ok: checked for an origin remote to push $base to — none configured, nothing pushed"
 elif G push -q origin "$base" 2>/dev/null; then
