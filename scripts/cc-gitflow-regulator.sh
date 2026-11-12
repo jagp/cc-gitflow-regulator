@@ -6,8 +6,8 @@
 #                                       for a FRESH worktree only, re-fork it from the
 #                                       gitflow base branch (develop by default); stamps
 #                                       HEAD so later alerts fire only on new commits
-#   notify  Stop                        desktop notification + optional IFTTT webhook when
-#                                       new committed work exists (deduped by HEAD sha)
+#   notify  Stop                        desktop notification when new committed work
+#                                       exists (deduped by HEAD sha)
 #   end     SessionEnd                  notify, then detach the worktree HEAD so the
 #                                       feature branch is free for the main checkout
 #                                       (your git client can check it out / merge it)
@@ -19,8 +19,6 @@
 #   CC_GITFLOW_REGULATOR_PREFIX          branch prefix        (default: feature/)
 #   CC_GITFLOW_REGULATOR_BASE            base branch to fork  (default: auto-detect
 #                                    develop, dev, origin/develop, origin/dev)
-#   CC_GITFLOW_REGULATOR_IFTTT_EVENT     IFTTT Maker event    (default: claude_work_done)
-#   CC_GITFLOW_REGULATOR_IFTTT_KEY_FILE  IFTTT key location   (default: ~/.claude/ifttt-key.txt)
 #
 # Guardrails must never break a session: this script always exits 0 and only
 # ever touches directories under .claude/worktrees/.
@@ -30,8 +28,6 @@ input="$(cat 2>/dev/null || true)"
 
 PREFIX="${CC_GITFLOW_REGULATOR_PREFIX:-feature/}"
 BASE_OVERRIDE="${CC_GITFLOW_REGULATOR_BASE:-}"
-IFTTT_EVENT="${CC_GITFLOW_REGULATOR_IFTTT_EVENT:-claude_work_done}"
-IFTTT_KEY_FILE="${CC_GITFLOW_REGULATOR_IFTTT_KEY_FILE:-$HOME/.claude/ifttt-key.txt}"
 
 # --- resolve the worktree directory from hook input (fallback: process cwd) --
 if command -v jq >/dev/null 2>&1; then
@@ -68,7 +64,7 @@ stamp_head() {
 
 # Keep .claude/worktrees/ out of the index: a `git add -A` run inside the repo
 # would otherwise record each worktree as a gitlink, leaving the main checkout
-# permanently "dirty" and blocking /finish-branch. info/exclude is per-clone,
+# permanently "dirty" and blocking /finish-feature. info/exclude is per-clone,
 # so the user's repo needs no committed .gitignore change.
 ensure_worktrees_excluded() {
   ex="$common/info/exclude"
@@ -115,18 +111,6 @@ notify_user() {
   elif command -v notify-send >/dev/null 2>&1; then
     # Linux desktop notification.
     notify-send "$title" "$body" >/dev/null 2>&1 || true
-  fi
-  # IFTTT Maker webhook — enabled by dropping your key in $IFTTT_KEY_FILE.
-  # Applet trigger: event $IFTTT_EVENT; value1=repo, value2=branch, value3=detail.
-  if [ -s "$IFTTT_KEY_FILE" ]; then
-    key="$(tr -cd 'A-Za-z0-9_-' < "$IFTTT_KEY_FILE")"
-    event="$(printf '%s' "$IFTTT_EVENT" | tr -cd 'A-Za-z0-9_-')"
-    # URL via --config on stdin so the key never appears in process arguments.
-    printf 'url = "https://maker.ifttt.com/trigger/%s/with/key/%s"\n' "$event" "$key" | \
-      curl -fsS -m 10 --config - \
-        --data-urlencode "value1=$repo_name" \
-        --data-urlencode "value2=${branch:-detached}" \
-        --data-urlencode "value3=$body" >/dev/null 2>&1 || true
   fi
 }
 

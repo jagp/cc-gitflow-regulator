@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+# Behaviour tests for scripts/finish-release.sh (release and hotfix): checks,
+# landing, resuming after a conflict, cleanup. One PASS/FAIL line per case,
+# exit 1 on any failure. Run from anywhere: bash tests/finish-release.sh
+source "$(dirname "$0")/lib.sh"
+today="$(date +%F)"
+# opened: release_repo with release/0.4.0 started (manifests bumped, entry drafted).
+opened() { release_repo; startr release start >/dev/null 2>&1; }
+# edit <file> <text> <message>: overwrite a file and commit it.
+edit() { printf '%s\n' "$2" > "$1"; git add "$1"; git commit -q -m "$3"; }
+
+# --- the happy path --------------------------------------------------------------------------
+opened; release_tip="$(git rev-parse HEAD)"
+out="$(finr release plan 2>&1)"
+check "plan changes nothing" '[ "$(git rev-parse HEAD)" = "$release_tip" ] && ! git show-ref -q --verify refs/tags/v0.4.0 && echo "$out" | grep -q "plan: merge into main (push): will do"'
+out="$(finr release finish 2>&1)"
+check "finish exits 0 and asks before pushing the tag" 'echo "$out" | grep -q exit=0 && echo "$out" | grep -q "^ask: push-tag v0.4.0"'
+check "main gets a --no-ff merge of the release" \
+  '[ "$(git log -1 --format=%s main)" = "Merge branch '"'"'release/0.4.0'"'"'" ] && [ "$(git rev-list --parents -n1 main | wc -w)" = 3 ] && git merge-base --is-ancestor "$release_tip" main'
+check "the tag sits on that merge commit" '[ "$(git rev-parse "v0.4.0^{commit}")" = "$(git rev-parse main)" ]'
+check "develop gets the release too" 'git merge-base --is-ancestor v0.4.0 develop'
+check "the entry is dated today" 'git show main:CHANGELOG.md | grep -q "^## 0.4.0 — $today"'
+check "release branch deleted, ends on develop" '! git show-ref -q --verify refs/heads/release/0.4.0 && [ "$(git branch --show-current)" = develop ]'
+check "main and develop pushed, tag not" \
+  '[ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$(git rev-parse main)" ] && ! git ls-remote --exit-code --tags origin v0.4.0 >/dev/null'
+
+opened; before="$(git ls-remote origin refs/heads/main | cut -f1)"
+CC_GITFLOW_REGULATOR_RELEASE_MERGE=local CC_GITFLOW_REGULATOR_BACK_MERGE=local finr release finish >/dev/null 2>&1
+check "local merge modes push nothing" '[ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$before" ] && git show-ref -q --verify refs/tags/v0.4.0'
+opened; git remote remove origin
+out="$(finr release finish 2>&1)"
+check "no origin: lands locally and says nothing was pushed" 'echo "$out" | grep -q exit=0 && echo "$out" | grep -q "nothing pushed — no origin remote"'
+
+# --- refusals --------------------------------------------------------------------------------
+opened; echo dirty >> CHANGELOG.md
+check "dirty tree refused" 'finr release finish 2>&1 | grep -q exit=2'
+opened; mkdir tests; printf '#!/usr/bin/env bash\nexit 1\n' > tests/broken.sh; git add tests; git commit -q -m "test: broken"
+out="$(finr release finish 2>&1)"
+check "a failing test suite refuses" 'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "tests: FAILED (tests/broken.sh)" && ! git show-ref -q --verify refs/tags/v0.4.0'
+opened; sed -i 's/^## 0.4.0 — unreleased/## something else/' CHANGELOG.md; git commit -q -am "docs: lose the entry"
+check "a missing changelog entry refuses" 'finr release finish 2>&1 | grep -q "CHANGELOG.md has no entry for 0.4.0"'
+check "the changelog switch drops that check" 'CC_GITFLOW_REGULATOR_CHANGELOG=0 finr release finish 2>&1 | grep -q exit=0'
+opened; sed -i 's/0.4.0/0.3.9/' .claude-plugin/plugin.json; git commit -q -am "chore: wrong version"
+check "a manifest at another version refuses" 'finr release finish 2>&1 | grep -q "not at 0.4.0: .claude-plugin/plugin.json"'
+
+# --- warnings --------------------------------------------------------------------------------
+opened; mkdir scripts; edit README.md "Install 0.3.1 like this" "docs: install note"
+edit scripts/tool.sh "echo tool" "feat: a tool"
+out="$(finr release plan 2>&1)"
+check "version sweep names files still saying 0.3.1" 'echo "$out" | grep -q "warn: still names 0.3.1: README.md:1"'
+check "coverage names changed files no test mentions" 'echo "$out" | grep -q "warn: no test change mentions scripts/tool.sh"'
+
+# --- conflicts and resuming ------------------------------------------------------------------
+# develop and the release both change notes.txt: the back-merge conflicts.
+release_repo; edit notes.txt base "docs: notes"; git push -q origin develop
+startr release start >/dev/null 2>&1; edit notes.txt release "docs: release notes"
+git switch -q develop; edit notes.txt develop "docs: develop notes"; git switch -q release/0.4.0
+out="$(finr release finish 2>&1)"
+check "back-merge conflict: exit 3, main merged and tagged locally" \
+  'echo "$out" | grep -q exit=3 && echo "$out" | grep -q "conflict: notes.txt" && git show-ref -q --verify refs/tags/v0.4.0 && [ "$(git branch --show-current)" = release/0.4.0 ]'
+tag_before="$(git rev-parse v0.4.0)"
+git switch -q develop; git merge -q --no-ff release/0.4.0 -m "Merge release by hand" >/dev/null 2>&1
+git checkout -q --theirs notes.txt; git add notes.txt; git commit -q --no-edit; git switch -q release/0.4.0
+out="$(finr release finish 2>&1)"
+check "re-run after resolving skips what is done" \
+  'echo "$out" | grep -q exit=0 && [ "$(git rev-parse v0.4.0)" = "$tag_before" ] && ! git show-ref -q --verify refs/heads/release/0.4.0'
+
+# main and the release both change notes.txt: the merge into main conflicts.
+release_repo; edit notes.txt base "docs: notes"; git push -q origin develop
+startr release start >/dev/null 2>&1; edit notes.txt release "docs: release notes"
+git switch -q main; edit notes.txt main "docs: main-only fix"; git switch -q release/0.4.0
+main_before="$(git rev-parse main)"
+out="$(finr release finish 2>&1)"
+check "main-merge conflict: exit 3, asks to sync main, main untouched, nothing tagged" \
+  'echo "$out" | grep -q exit=3 && echo "$out" | grep -q "^ask: sync-main" && [ "$(git rev-parse main)" = "$main_before" ] && ! git show-ref -q --verify refs/tags/v0.4.0'
+out="$(finr release sync-main 2>&1)"
+check "sync-main stops on the conflict and names it" 'echo "$out" | grep -q exit=3 && echo "$out" | grep -q "conflict: notes.txt"'
+git checkout -q --ours notes.txt; git add notes.txt; git commit -q --no-edit
+check "after resolving, finish lands it" 'finr release finish 2>&1 | grep -q exit=0 && git merge-base --is-ancestor v0.4.0 develop'
+
+# --- odd inputs ------------------------------------------------------------------------------
+opened; printf '# Changelog\r\n\r\n## 0.4.0 — unreleased\r\n\r\n- a thing\r\n' > CHANGELOG.md; git commit -q -am "docs: crlf changelog"
+finr release finish >/dev/null 2>&1
+check "a CRLF changelog is dated with its line endings kept" \
+  'git show main:CHANGELOG.md | grep -q "^## 0.4.0 — $today" && [ "$(git show main:CHANGELOG.md | tr -cd "\r" | wc -c)" = 5 ]'
+opened; git switch -q -c feature/elsewhere develop
+check "finish works from another branch and ends on develop" \
+  'finr release finish 2>&1 | grep -q exit=0 && [ "$(git branch --show-current)" = develop ]'
+opened; wt held release/0.4.0; git merge -q --no-ff feature/held -m "Merge feature/held into release"
+finr release finish >/dev/null 2>&1
+check "a feature held for the release is cleaned up with it" \
+  '! git show-ref -q --verify refs/heads/feature/held && [ ! -e .claude/worktrees/held ]'
+
+# --- hotfix ----------------------------------------------------------------------------------
+opened; commit "feat: in the release"
+startr hotfix start >/dev/null 2>&1; edit fix.txt fixed "fix: the urgent bug"
+out="$(finr hotfix finish 2>&1)"
+check "hotfix lands on main with its own tag" 'echo "$out" | grep -q exit=0 && [ "$(git rev-parse "v0.3.2^{commit}")" = "$(git rev-parse main)" ]'
+check "with a release open, the fix goes into the release, not develop" \
+  'git merge-base --is-ancestor v0.3.2 release/0.4.0 && ! git merge-base --is-ancestor v0.3.2 develop'
+check "the empty entry was filled from the fix" 'git show main:CHANGELOG.md | grep -q "^- the urgent bug"'
+release_repo; startr hotfix start >/dev/null 2>&1; edit fix.txt fixed "fix: the urgent bug"
+finr hotfix finish >/dev/null 2>&1
+check "with no release open, the fix goes into develop" 'git merge-base --is-ancestor v0.3.2 develop'
+
+# --- review fixes ----------------------------------------------------------------------------
+# From a worktree while develop is checked out in the main clone: refuse, name it.
+opened; git switch -q develop; wt z develop; cd .claude/worktrees/z || exit 1
+out="$(finr release finish 2>&1)"; cd "$SCRATCH/f/clone" || exit 1
+check "a branch checked out in another worktree is refused by name" \
+  'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "is checked out at" && ! git show-ref -q --verify refs/tags/v0.4.0'
+# BSD wc pads its count with spaces.
+mkdir -p "$SCRATCH/padbin"; printf '#!/usr/bin/env bash\n/usr/bin/wc "$@" | sed "s/^/       /"\n' > "$SCRATCH/padbin/wc"; chmod +x "$SCRATCH/padbin/wc"
+opened
+check "a padded wc -l (macOS) still finds the one release" 'PATH="$SCRATCH/padbin:$PATH" finr release finish 2>&1 | grep -q exit=0'
+# bash 3.2: the date replacement keeps no quotes.
+opened; BASH_COMPAT=32 finr release finish >/dev/null 2>&1
+check "bash 3.2: the entry is dated cleanly" 'git show main:CHANGELOG.md | grep -q "^## 0.4.0 — $today\$"'
+# A hotfix that also changes a dependency keeps that change in the open release.
+release_repo; git switch -q main
+printf '{\n  "name": "x",\n  "version": "0.3.1",\n  "dependencies": {\n    "a": "1.0.0"\n  }\n}\n' > package.json
+git add package.json; git commit -q -m "chore: package.json"; git push -q origin main
+git switch -q develop; git merge -q --no-ff main -m "Merge main"; git push -q origin develop
+startr release start >/dev/null 2>&1; startr hotfix start >/dev/null 2>&1
+sed -i 's/"a": "1.0.0"/"a": "1.0.9"/' package.json; git commit -q -am "fix: bump a for the CVE"
+finr hotfix finish >/dev/null 2>&1
+check "the hotfix's dependency change reaches the open release, which keeps its version" \
+  'git show release/0.4.0:package.json | grep -q "\"a\": \"1.0.9\"" && git show release/0.4.0:package.json | grep -q "\"version\": \"0.4.0\""'
+check "a hotfix does not push a release branch that was never pushed" '! git ls-remote --exit-code origin refs/heads/release/0.4.0 >/dev/null'
+# Saying no to the tag push, then running finish again, asks again.
+opened; finr release finish >/dev/null 2>&1
+out="$(finr release finish 2>&1)"
+check "re-running finish after declining the tag push asks again" 'echo "$out" | grep -q exit=0 && echo "$out" | grep -q "^ask: push-tag v0.4.0"'
+# main behind origin: refuse before merging.
+opened; git clone -q ../origin.git ../other 2>/dev/null
+(cd ../other && echo x > hot.txt && git add hot.txt && git commit -q -m "fix: on main" && git push -q origin main)
+main_before="$(git rev-parse main)"; out="$(finr release finish 2>&1)"
+check "main behind origin is refused before merging" \
+  'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "main is behind origin" && [ "$(git rev-parse main)" = "$main_before" ]'
+# Resuming with uncommitted changes refuses instead of risking them.
+release_repo; edit notes.txt base "docs: notes"; git push -q origin develop
+startr release start >/dev/null 2>&1; edit notes.txt release "docs: release notes"
+git switch -q develop; edit notes.txt develop "docs: develop notes"; git switch -q release/0.4.0
+finr release finish >/dev/null 2>&1; echo edited >> CHANGELOG.md
+check "a resumed finish refuses uncommitted changes" 'finr release finish 2>&1 | grep -q "uncommitted changes" && grep -q edited CHANGELOG.md'
+
+# --- publish ---------------------------------------------------------------------------------
+fake_gh
+# landed: opened, the entry hand-written, then finished (tag local, not pushed).
+landed() { opened; printf '# Changelog
+
+## 0.4.0 — unreleased
+
+- hand written
+' > CHANGELOG.md
+  git commit -q -am "docs: entry"; finr release finish >/dev/null 2>&1; rm -f "$SCRATCH_LOG"; }
+
+landed; printf '# Releasing
+
+## Notify
+
+- the team wiki
+- an email to ops
+' > RELEASING.md
+out="$(finr release publish 2>&1)"
+check "publish pushes the tag" 'echo "$out" | grep -q exit=0 && git ls-remote --exit-code --tags origin v0.4.0 >/dev/null'
+check "publish creates the GitHub Release from the changelog entry"   'grep -q "^gh release create v0.4.0 --title v0.4.0" "$SCRATCH_LOG" && grep -q "hand written" "$SCRATCH_LOG"'
+check "publish prints the rollback commands" 'echo "$out" | grep -q "rollback: git push origin :refs/tags/v0.4.0"'
+check "publish prints the notify list and an announcement"   'echo "$out" | grep -q "^notify: the team wiki" && echo "$out" | grep -q "^notify: an email to ops" && echo "$out" | grep -q "^announce: .* v0.4.0"'
+landed
+check "no RELEASING.md: a note says where to add the list" 'finr release publish 2>&1 | grep -q "no RELEASING.md"'
+landed; CC_GITFLOW_REGULATOR_GH_RELEASE=0 finr release publish >/dev/null 2>&1
+check "GitHub Release off by env" '[ ! -e "$SCRATCH_LOG" ] && git ls-remote --exit-code --tags origin v0.4.0 >/dev/null'
+landed; git config gitflow.release.githubRelease false; finr release publish >/dev/null 2>&1
+check "GitHub Release off by git config" '[ ! -e "$SCRATCH_LOG" ]'
+landed; out="$(GH_STUB_EXIT=1 finr release publish 2>&1)"
+check "gh failing warns with the command to run, release still ok"   'echo "$out" | grep -q exit=0 && echo "$out" | grep -q "warn: GitHub Release not created" && echo "$out" | grep -q "gh release create v0.4.0"'
+opened; export CC_GITFLOW_REGULATOR_CHANGELOG=0; finr release finish >/dev/null 2>&1; rm -f "$SCRATCH_LOG"
+finr release publish >/dev/null 2>&1; unset CC_GITFLOW_REGULATOR_CHANGELOG
+check "changelog off: release notes come from the commits" 'grep -q "^- a new thing" "$SCRATCH_LOG"'
+landed; git remote remove origin
+check "publish without origin refuses" 'finr release publish 2>&1 | grep -q exit=2'
+
+# --- merge modes: pr | push | local per stage -------------------------------------------------
+# into main:  CC_GITFLOW_REGULATOR_RELEASE_MERGE / gitflow.release.merge (default pr)
+# merge back: CC_GITFLOW_REGULATOR_BACK_MERGE / gitflow.release.backMerge (default push)
+# pr_opened: opened, the merge into main set to pr, no PR state left over.
+pr_opened() { opened; git config gitflow.release.merge pr; reset_gh; }
+
+opened; git config --unset gitflow.release.merge
+check "the merge into main defaults to a PR, the merge back to push" \
+  'finr release plan 2>&1 | grep -q "plan: merge into main (pr): via a PR" && finr release plan 2>&1 | grep -q "plan: merge back into develop (push): will do"'
+opened; git config gitflow.release.merge sideways
+check "an unknown mode refuses" 'finr release finish 2>&1 | grep -q "expected pr, push or local"'
+
+pr_opened; main_before="$(git rev-parse main)"
+out="$(finr release finish 2>&1)"
+check "into main by PR: finish opens a PR into main and stops" \
+  'echo "$out" | grep -q exit=0 && grep -q "^gh pr create --base main --head release/0.4.0" "$SCRATCH_LOG" && echo "$out" | grep -q "^next: .*merge commit"'
+check "into main by PR: main untouched, no tag, branch kept and pushed" \
+  '[ "$(git rev-parse main)" = "$main_before" ] && [ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$main_before" ] && ! git show-ref -q --verify refs/tags/v0.4.0 && git show-ref -q --verify refs/heads/release/0.4.0 && [ "$(git ls-remote origin refs/heads/release/0.4.0 | cut -f1)" = "$(git rev-parse release/0.4.0)" ]'
+check "into main by PR: the entry is dated before the PR opens" 'git show release/0.4.0:CHANGELOG.md | grep -q "^## 0.4.0 — $today"'
+out="$(finr release finish 2>&1)"
+check "into main by PR: a re-run while the PR is open opens no second PR" \
+  'echo "$out" | grep -q exit=0 && [ "$(grep -c "^gh pr create" "$SCRATCH_LOG")" = 1 ] && echo "$out" | grep -q "already open"'
+merge_on_origin merge main release/0.4.0; merge_commit="$(git ls-remote origin refs/heads/main | cut -f1)"
+out="$(finr release finish 2>&1)"
+check "into main by PR: after the merge, finish tags it, merges back and cleans up" \
+  'echo "$out" | grep -q exit=0 && [ "$(git rev-parse "v0.4.0^{commit}")" = "$merge_commit" ] && git merge-base --is-ancestor v0.4.0 develop && ! git show-ref -q --verify refs/heads/release/0.4.0 && echo "$out" | grep -q "^ask: push-tag v0.4.0"'
+check "into main by PR: main is not merged a second time; develop is pushed" \
+  '[ "$(git rev-parse main)" = "$merge_commit" ] && [ "$(git ls-remote origin refs/heads/develop | cut -f1)" = "$(git rev-parse develop)" ]'
+
+pr_opened; finr release finish >/dev/null 2>&1; merge_on_origin squash main release/0.4.0
+out="$(finr release finish 2>&1)"
+check "into main by PR: a squash-merged PR refuses (no merge commit to tag)" \
+  'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "merge commit" && ! git show-ref -q --verify refs/tags/v0.4.0 && [ "$(grep -c "^gh pr create" "$SCRATCH_LOG")" = 1 ]'
+pr_opened; out="$(GH_STUB_EXIT=1 finr release finish 2>&1)"
+check "into main by PR: gh unusable refuses before pushing anything" \
+  'echo "$out" | grep -q exit=2 && ! git ls-remote --exit-code origin refs/heads/release/0.4.0 >/dev/null'
+pr_opened; git remote remove origin
+check "into main by PR: no origin refuses" 'finr release finish 2>&1 | grep -q exit=2 && ! git show-ref -q --verify refs/tags/v0.4.0'
+opened; reset_gh
+out="$(CC_GITFLOW_REGULATOR_RELEASE_MERGE=pr finr release finish 2>&1)"
+check "the env var wins over git config" 'grep -q "^gh pr create" "$SCRATCH_LOG" && ! git show-ref -q --verify refs/tags/v0.4.0'
+
+# The merge back by PR: from main into develop, after main is merged and pushed here.
+opened; git config gitflow.release.backMerge pr; reset_gh; develop_before="$(git rev-parse develop)"
+out="$(finr release finish 2>&1)"
+check "back by PR: main merged, tagged and pushed; a PR from main into develop opened" \
+  'echo "$out" | grep -q exit=0 && git show-ref -q --verify refs/tags/v0.4.0 && [ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$(git rev-parse main)" ] && grep -q "^gh pr create --base develop --head main" "$SCRATCH_LOG" && echo "$out" | grep -q "^next: "'
+check "back by PR: develop untouched, branch kept" \
+  '[ "$(git rev-parse develop)" = "$develop_before" ] && git show-ref -q --verify refs/heads/release/0.4.0'
+merge_on_origin merge develop main
+out="$(finr release finish 2>&1)"
+check "back by PR: after the merge, finish catches develop up and cleans up" \
+  'echo "$out" | grep -q exit=0 && git merge-base --is-ancestor v0.4.0 develop && ! git show-ref -q --verify refs/heads/release/0.4.0 && [ "$(grep -c "^gh pr create" "$SCRATCH_LOG")" = 1 ] && echo "$out" | grep -q "^ask: push-tag v0.4.0"'
+opened; git config gitflow.release.merge local; git config gitflow.release.backMerge pr
+check "back by PR with main kept local refuses (the PR comes from main)" 'finr release finish 2>&1 | grep -q "never pushes"'
+
+echo "$failures failure(s)"; [ "$failures" = 0 ]
