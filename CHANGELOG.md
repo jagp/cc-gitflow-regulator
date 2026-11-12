@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 — 2026-11-08
+## 1.0.0 — 2026-11-12
 
 First release intended for distribution.
 
@@ -10,8 +10,14 @@ First release intended for distribution.
   creates `feature/<name>` off it, records that base in git config
   (`gitflow.branch.<branch>.base`), and runs the test suite as a baseline.
   `--create-base` bootstraps `develop` from main/master.
-- `/finish-feature` pushes the merged base to origin after a clean merge.
-  `CC_GITFLOW_REGULATOR_PUSH_MERGED=0` keeps merges local.
+- Every merge stage has a mode, `pr`, `push` or `local`, set by environment
+  variable or per repo in git config: feature into its base
+  (`CC_GITFLOW_REGULATOR_FEATURE_MERGE` / `gitflow.feature.merge`, default
+  `push`), release or hotfix into `main` (`CC_GITFLOW_REGULATOR_RELEASE_MERGE`
+  / `gitflow.release.merge`, default `pr`), and the merge back
+  (`CC_GITFLOW_REGULATOR_BACK_MERGE` / `gitflow.release.backMerge`, default
+  `push`). `pr` pushes the branch, opens a GitHub PR and stops until it is
+  merged with a merge commit; it refuses rather than ever merging locally.
 - `/finish-feature` offers to delete the branch on origin (`ask: delete-remote`)
   once the local branch is gone and origin holds nothing beyond it. The delete
   only goes through if origin hasn't moved (`--force-with-lease`).
@@ -25,8 +31,9 @@ First release intended for distribution.
 - `/start-release` (alias `/new-release`) and `/finish-release`: cut
   `release/<version>` from `develop` with the version suggested from the
   Conventional Commits since the last tag, bump the manifests, draft the
-  changelog entry; then land it on `main` with a tag, merge it back, push,
-  clean up, and (after a yes) push the tag and create the GitHub Release page.
+  changelog entry; then land it on `main` (through a PR by default) with a
+  tag, merge it back, push, clean up, and (after a yes) push the tag and
+  create the GitHub Release page.
 - `/start-hotfix` (alias `/new-hotfix`) and `/finish-hotfix`: the same for a
   fix to what is released, branched from `main` and merged back into an open
   release branch when there is one.
