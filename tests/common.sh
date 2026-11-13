@@ -27,10 +27,11 @@ check "gitflow.testCommand replaces detection" '[ "$out" = "test: true   (from g
 git config --unset gitflow.testCommand
 
 # --- running them ----------------------------------------------------------------------------
-printf '#!/usr/bin/env bash\nexit 1\n' > tests/a.sh
+printf '#!/usr/bin/env bash\necho "FAIL  the widget is broken"\nexit 1\n' > tests/a.sh
 out="$(lib run_tests . 2>&1)"; code=$?
 check "a failing suite fails the run, the others still run" \
   '[ "$code" = 1 ] && [ -e ran-b ] && echo "$out" | grep -q "tests: FAILED (tests/a.sh)"'
+check "a failing suite's own last lines are shown" 'echo "$out" | grep -q "tests/a.sh: FAIL  the widget is broken"'
 rm -f ran-b; printf '#!/usr/bin/env bash\nexit 0\n' > tests/a.sh
 out="$(lib run_tests . 2>&1)"; code=$?
 check "all suites passing passes" '[ "$code" = 0 ] && echo "$out" | grep -q "tests: passed"'

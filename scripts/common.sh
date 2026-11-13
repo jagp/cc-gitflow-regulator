@@ -236,7 +236,7 @@ detect_tests() {
 #   - nothing found: warn and pass (a repo without tests can still release)
 # Prints "tests: passed" or "tests: FAILED (<what failed>)".
 run_tests() {
-  local dir="$1" configured failed="" line command suite ran=0
+  local dir="$1" configured failed="" line command suite suite_output ran=0
   configured="$(G config --get gitflow.testCommand 2>/dev/null || true)"
   if [ -n "$configured" ]; then
     ran=1; (cd "$dir" && eval "$configured") || failed="$configured"
@@ -248,7 +248,12 @@ run_tests() {
       case "$command" in
         *run-tests.sh*)                                          # shell suites, one by one
           for suite in $(shell_test_suites "$dir"); do
-            (cd "$dir" && bash "$suite" >/dev/null 2>&1) || failed="${failed:+$failed, }$suite"
+            # Quiet on success; on failure, show the suite's last lines (its
+            # FAIL lines and error), prefixed with its name, so a CI log says why.
+            if ! suite_output="$(cd "$dir" && bash "$suite" 2>&1)"; then
+              failed="${failed:+$failed, }$suite"
+              printf '%s\n' "$suite_output" | tail -n 15 | sed "s|^|$suite: |"
+            fi
           done ;;
         *) (cd "$dir" && eval "$command") || failed="${failed:+$failed, }$command" ;;
       esac
