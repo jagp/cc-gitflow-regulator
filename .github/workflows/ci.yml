@@ -1,0 +1,15 @@
+# Runs every test suite (tests/*.sh, through scripts/run-tests.sh) on pushes
+# and pull requests. The Windows-only stalled-jobs suite skips itself here.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test suites
+        run: bash scripts/run-tests.sh
