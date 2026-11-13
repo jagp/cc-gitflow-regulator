@@ -149,7 +149,10 @@ production_branch() {
 # start-feature.sh and finish-feature.sh use.
 integration_branch() {
   local candidate
-  for candidate in ${CC_GITFLOW_REGULATOR_BASE:-} develop dev; do
+  # Order: the override, then git-flow's own per-repo setting (a repo with no
+  # develop can name main here), then the usual names. The same order is used
+  # in finish-feature.sh (base fallback) and cc-gitflow-regulator.sh (detect_base).
+  for candidate in ${CC_GITFLOW_REGULATOR_BASE:-} $(G config --get gitflow.branch.develop 2>/dev/null) develop dev; do
     if has_ref "refs/heads/$candidate"; then echo "$candidate"; return 0; fi
   done
 }

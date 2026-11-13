@@ -98,9 +98,7 @@ if [ -n "$BASE_OVERRIDE" ]; then
     || fail "CC_GITFLOW_REGULATOR_BASE=$BASE_OVERRIDE is not a local branch"
   base="$BASE_OVERRIDE"
 else
-  for b in develop dev; do
-    if has_ref "refs/heads/$b"; then base="$b"; break; fi
-  done
+  base="$(integration_branch)"     # common.sh: gitflow.branch.develop, develop, dev
 fi
 if [ -z "$base" ]; then
   # origin/develop exists but was never checked out locally: adopt it rather

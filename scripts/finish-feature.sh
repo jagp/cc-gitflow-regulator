@@ -179,11 +179,13 @@ elif [ -n "$BASE_OVERRIDE" ]; then
     || fail "CC_GITFLOW_REGULATOR_BASE=$BASE_OVERRIDE is not a local branch"
   base="$BASE_OVERRIDE"
 else
-  for b in develop dev; do
+  # Same order as common.sh integration_branch: git-flow's per-repo setting
+  # (gitflow.branch.develop), then develop, then dev.
+  for b in $(G config --get gitflow.branch.develop 2>/dev/null) develop dev; do
     if G show-ref --verify -q "refs/heads/$b"; then base="$b"; break; fi
   done
 fi
-[ -n "$base" ] || fail "no local base branch (develop/dev) — set CC_GITFLOW_REGULATOR_BASE"
+[ -n "$base" ] || fail "no local base branch (gitflow.branch.develop/develop/dev) — set CC_GITFLOW_REGULATOR_BASE"
 [ "$branch" = "$base" ] && fail "refusing: $branch is the base branch"
 
 # --- adopt an origin-only branch (finish) / pick the computation ref ---------

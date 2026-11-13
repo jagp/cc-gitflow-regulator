@@ -55,5 +55,7 @@ git branch -m main master
 check "production branch falls back to master" '[ "$(lib production_branch)" = master ]'
 git branch trunk; git config gitflow.branch.master trunk
 check "gitflow.branch.master names the production branch" '[ "$(lib production_branch)" = trunk ]'
+git config gitflow.branch.develop trunk
+check "gitflow.branch.develop names the integration branch" '[ "$(lib integration_branch)" = trunk ]'
 
 echo "$failures failure(s)"; [ "$failures" = 0 ]
