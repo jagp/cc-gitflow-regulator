@@ -20,6 +20,10 @@
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/cc-gitflow-tests.XXXXXX")"
 export CC_GITFLOW_REGULATOR_JOBS_DIR="$SCRATCH/jobs"
+# A throwaway author for every commit the tests (and the scripts they run)
+# make, so the suite runs on a machine with no git identity (a CI runner).
+export GIT_AUTHOR_NAME="cc-gitflow tests" GIT_AUTHOR_EMAIL="tests@cc-gitflow.invalid"
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 trap 'cd /; rm -rf "${SCRATCH:?}"' EXIT
 
 fresh() {
