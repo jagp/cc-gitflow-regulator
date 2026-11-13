@@ -82,5 +82,12 @@ check "end: a clean worktree is detached, freeing the branch" \
 new_worktree e2; hook rename "$(pwd)/$W/e2" >/dev/null; echo d > "$W/e2/d.txt"; hook end "$(pwd)/$W/e2"
 check "end: a dirty worktree keeps its branch" '[ "$(git -C "$W/e2" branch --show-current)" = feature/e2 ]'
 
+# --- gitflow.branch.develop -------------------------------------------------------------
+# A repo can name its integration branch (here: trunk) the way git-flow does.
+fresh; git branch trunk main; git switch -q trunk; git commit -q --allow-empty -m "trunk moves ahead"; git switch -q main
+git config gitflow.branch.develop trunk
+new_worktree t; hook rename "$(pwd)/$W/t" >/dev/null
+check "rename: a fresh worktree forks from gitflow.branch.develop when set" '[ "$(git -C "$W/t" rev-parse HEAD)" = "$(git rev-parse trunk)" ]'
+
 echo "$failures failure(s)"
 [ "$failures" = 0 ]

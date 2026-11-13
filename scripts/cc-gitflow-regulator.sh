@@ -18,7 +18,8 @@
 # Configuration (env vars, e.g. via "env" in settings.json):
 #   CC_GITFLOW_REGULATOR_PREFIX          branch prefix        (default: feature/)
 #   CC_GITFLOW_REGULATOR_BASE            base branch to fork  (default: auto-detect
-#                                    develop, dev, origin/develop, origin/dev)
+#                                    git config gitflow.branch.develop, develop, dev,
+#                                    origin/develop, origin/dev)
 #
 # Guardrails must never break a session: this script always exits 0 and only
 # ever touches directories under .claude/worktrees/.
@@ -82,7 +83,9 @@ detect_base() {
     return 0
   fi
   local b
-  for b in develop dev; do
+  # Same order as common.sh integration_branch: git-flow's per-repo setting
+  # (gitflow.branch.develop) first, then the usual names.
+  for b in $(git -C "$dir" config --get gitflow.branch.develop 2>/dev/null) develop dev; do
     if git -C "$dir" show-ref --verify -q "refs/heads/$b"; then printf '%s' "$b"; return 0; fi
   done
   for b in origin/develop origin/dev; do
