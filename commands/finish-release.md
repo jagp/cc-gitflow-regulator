@@ -39,6 +39,9 @@ Exit codes:
   and the `next:` line, stress that the PR must be merged **with a merge
   commit** (not squash or rebase), and stop. Never merge the PR yourself.
   Once the user has merged it, running `/finish-<type>` again carries on.
+  If the tag is already on origin (release automation, or another clone, finished
+  it), finish stops and changes nothing: pull `main` and `develop`, and the local
+  branch is deleted at the next session start.
 - `2`: refused (dirty tree, failing tests, no changelog entry, a manifest at
   another version, a tag that marks something else; for a `pr` stage also no
   origin, no working `gh`, or a PR that was squash/rebase merged; an unknown

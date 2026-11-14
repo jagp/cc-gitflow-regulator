@@ -1,5 +1,5 @@
 {
-  "description": "Gitflow guardrails for Claude Code worktrees: rename worktree branches to feature/*, fork from develop, notify when committed work is ready, and release branches at session end so your git client can use them.",
+  "description": "Gitflow guardrails for Claude Code: rename worktree branches to feature/*, fork from develop, notify when committed work is ready, release branches at session end so your git client can use them, and at session start delete local branches whose work origin already holds.",
   "hooks": {
     "PostToolUse": [
       {
@@ -33,6 +33,19 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/cc-gitflow-regulator.sh\" end",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/prune-merged.sh\" session",
+            "timeout": 30,
+            "statusMessage": "gitflow: pruning merged branches"
           }
         ]
       }

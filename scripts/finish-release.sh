@@ -127,6 +127,16 @@ if [ "$branch_type" = hotfix ]; then
   open_release="$(G for-each-ref --format='%(refname:short)' refs/heads/release/ | head -1)"
   [ -n "$open_release" ] && merge_back_into="$open_release"
 fi
+# Finished elsewhere: the tag is already on origin, yet the branch is still open
+# here. This finish never pushes the tag before the branch is gone (publish
+# comes after cleanup), so something else finished it: release automation, or
+# another clone. Re-running the steps would rebuild the merge back on a stale
+# integration branch, so stop and say what is left: local cleanup only.
+if [ "$has_origin" = 1 ] && G ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+  echo "ok: $tag is already on origin — $branch was finished elsewhere; nothing to land"
+  echo "next: pull $production and $merge_back_into, then delete the local $branch (the session-start prune deletes it once origin holds its work)"
+  exit 0
+fi
 # The previous release: the version sweep looks for it, ranges start at it.
 previous_tag="$(last_release_tag "$production")"
 since="${previous_tag:+$previous_tag..}"
@@ -332,7 +342,7 @@ if [ "$landed" = 0 ]; then
     open_pr "$production" "$branch" "$pr_title" "$(release_notes "$version" "$branch" "$since$branch")
 
 ---
-Opened by \`/finish-$branch_type\`. **Merge this with a merge commit** (not squash or rebase), then run \`/finish-$branch_type\` again: it tags the merge as \`$tag\` and carries on." \
+Opened by \`/finish-$branch_type\`. **Merge this with a merge commit** (not squash or rebase), then run \`/finish-$branch_type\` again: it tags the merge as \`$tag\` and carries on. If something else finishes releases for this repo, it stops once \`$tag\` is on origin." \
       || fail "gh pr create failed — $branch is pushed; open a PR into $production by hand"
     echo "next: merge the PR with a merge commit (not squash or rebase), then run finish again to tag $tag and carry on"
     exit 0

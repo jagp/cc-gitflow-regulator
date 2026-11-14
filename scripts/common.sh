@@ -20,6 +20,7 @@
 #   open_pr <base> <head> <title> <body>  open (or reuse) a PR, print its URL
 #   production_branch          gitflow.branch.master if set, else main, else master
 #   integration_branch         CC_GITFLOW_REGULATOR_BASE if set, else gitflow.branch.develop, else develop, else dev
+#   long_lived_branches        every name a branch's work may rest in for good
 #   require_clean_tree <dir>   refuse when tracked files have uncommitted changes
 #   shell_test_suites <dir>    the *.sh test scripts in tests/ or test/
 #   detect_tests <dir>         one "test: <command>   (from <signal>)" line per runner
@@ -155,6 +156,18 @@ integration_branch() {
   for candidate in ${CC_GITFLOW_REGULATOR_BASE:-} $(G config --get gitflow.branch.develop 2>/dev/null) develop dev; do
     if has_ref "refs/heads/$candidate"; then echo "$candidate"; return 0; fi
   done
+}
+
+# long_lived_branches: the names a feature's or release's work may rest in for
+# good, so the branch that carried it can be deleted. Printed space-separated;
+# names that don't exist are fine (callers check). The list:
+#   1. the usual names: develop, dev, main, master
+#   2. the CC_GITFLOW_REGULATOR_BASE override
+#   3. git-flow's per-repo names (gitflow.branch.develop / gitflow.branch.master),
+#      so a repo whose integration branch is "trunk" counts it too
+# Used by finish-feature.sh (cleanup) and prune-merged.sh (session pruning).
+long_lived_branches() {
+  echo "develop dev main master ${CC_GITFLOW_REGULATOR_BASE:-}"     "$(G config --get gitflow.branch.develop 2>/dev/null)" "$(G config --get gitflow.branch.master 2>/dev/null)"
 }
 
 # require_clean_tree: untracked files are allowed on purpose (a local .claude/
