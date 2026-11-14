@@ -27,10 +27,11 @@ check "gitflow.testCommand replaces detection" '[ "$out" = "test: true   (from g
 git config --unset gitflow.testCommand
 
 # --- running them ----------------------------------------------------------------------------
-printf '#!/usr/bin/env bash\nexit 1\n' > tests/a.sh
+printf '#!/usr/bin/env bash\necho "FAIL  the widget is broken"\nexit 1\n' > tests/a.sh
 out="$(lib run_tests . 2>&1)"; code=$?
 check "a failing suite fails the run, the others still run" \
   '[ "$code" = 1 ] && [ -e ran-b ] && echo "$out" | grep -q "tests: FAILED (tests/a.sh)"'
+check "a failing suite's own last lines are shown" 'echo "$out" | grep -q "tests/a.sh: FAIL  the widget is broken"'
 rm -f ran-b; printf '#!/usr/bin/env bash\nexit 0\n' > tests/a.sh
 out="$(lib run_tests . 2>&1)"; code=$?
 check "all suites passing passes" '[ "$code" = 0 ] && echo "$out" | grep -q "tests: passed"'
@@ -55,5 +56,9 @@ git branch -m main master
 check "production branch falls back to master" '[ "$(lib production_branch)" = master ]'
 git branch trunk; git config gitflow.branch.master trunk
 check "gitflow.branch.master names the production branch" '[ "$(lib production_branch)" = trunk ]'
+git config gitflow.branch.develop trunk
+check "gitflow.branch.develop names the integration branch" '[ "$(lib integration_branch)" = trunk ]'
+git config gitflow.branch.develop no-such-branch
+check "gitflow.branch.develop naming a missing branch falls back to develop" '[ "$(lib integration_branch)" = develop ]'
 
 echo "$failures failure(s)"; [ "$failures" = 0 ]

@@ -4,7 +4,7 @@
 
 # cc-gitflow-regulator
 
-v1.0.0
+v1.0.1
 
 Gitflow guardrails for Claude Code — every worktree flows back through the regulator.
 
@@ -54,8 +54,8 @@ when the work is done. This plugin fixes all three:
 ## Installation
 
 ```install
-/plugin marketplace add jagp/cc-gitflow-regulator
-/plugin install cc-gitflow-regulator@cc-gitflow-regulator
+/plugin marketplace add jagp/interface-layer
+/plugin install cc-gitflow-regulator@interface-layer
 ```
 
 ## How it works
@@ -78,7 +78,7 @@ All optional, via environment variables (e.g. the `"env"` block in
 | Variable                        | Default                   | Purpose                                                                                                                                          |
 | ------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `CC_GITFLOW_REGULATOR_PREFIX`         | `feature/`                | Branch prefix for renamed worktree branches                                                                                                      |
-| `CC_GITFLOW_REGULATOR_BASE`           | auto                      | Base branch to fork from. Auto-detect order: `develop`, `dev`, `origin/develop`, `origin/dev`. If none exist, worktrees keep their default base. |
+| `CC_GITFLOW_REGULATOR_BASE`           | auto                      | Base branch to fork from. Auto-detect order: `git config gitflow.branch.develop` (git-flow's own per-repo setting; a repo without `develop` can name `main`), `develop`, `dev`, `origin/develop`, `origin/dev`. If none exist, worktrees keep their default base. |
 | `CC_GITFLOW_REGULATOR_FEATURE_MERGE`  | `push`                    | How `/finish-feature` lands a feature on its base: `push` merges here and pushes the base, `local` merges here and pushes nothing, `pr` pushes the branch and opens a GitHub PR instead. |
 | `CC_GITFLOW_REGULATOR_RELEASE_MERGE`  | `pr`                      | How `/finish-release` and `/finish-hotfix` land on `main`: same three values. The highest-stakes merge, so it waits for a PR by default. |
 | `CC_GITFLOW_REGULATOR_BACK_MERGE`     | `push`                    | How a finished release or hotfix is merged back into `develop` (or the open `release/*`): same three values; its PR goes from `main`. |
@@ -220,8 +220,8 @@ and the tag pushed only after you agree.
 It never suggests 1.0.0: leaving 0.x is your call, made by naming the version
 (`/start-release 1.0.0`). It refuses while another release is open or the tag
 exists. Then it creates `release/<version>` from `develop`, bumps the version
-in `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` and
-`package.json`, drafts a `CHANGELOG.md` entry from the commits for you to
+in whichever of `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`
+and `package.json` exist, drafts a `CHANGELOG.md` entry from the commits for you to
 edit, commits that, and runs the tests as a baseline. A hotfix branches from
 `main` instead, always takes the next patch, and may start while a release
 is open.

@@ -35,5 +35,13 @@ fresh; git clone -q ../origin.git ../other 2>/dev/null
 start start ff >/dev/null 2>&1
 check "develop behind origin is fast-forwarded first" '[ "$(git rev-parse develop)" = "$(git -C ../origin.git rev-parse develop)" ]'
 
+# a repo with no develop at all that names main as its integration branch
+fresh; git switch -q main; git branch -D develop -q; git push -q origin --delete develop 2>/dev/null
+git update-ref -d refs/remotes/origin/develop; git config gitflow.branch.develop main
+git commit -q --allow-empty -m "main moves"
+out="$(start start onmain 2>&1)"
+check "gitflow.branch.develop=main: branches off main, no --create-base needed" \
+  'echo "$out" | grep -q exit=0 && [ "$(git branch --show-current)" = feature/onmain ] && [ "$(git merge-base HEAD main)" = "$(git rev-parse main)" ] && ! git show-ref -q --verify refs/heads/develop'
+
 echo "$failures failure(s)"
 [ "$failures" = 0 ]
