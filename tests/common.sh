@@ -58,5 +58,7 @@ git branch trunk; git config gitflow.branch.master trunk
 check "gitflow.branch.master names the production branch" '[ "$(lib production_branch)" = trunk ]'
 git config gitflow.branch.develop trunk
 check "gitflow.branch.develop names the integration branch" '[ "$(lib integration_branch)" = trunk ]'
+git config gitflow.branch.develop no-such-branch
+check "gitflow.branch.develop naming a missing branch falls back to develop" '[ "$(lib integration_branch)" = develop ]'
 
 echo "$failures failure(s)"; [ "$failures" = 0 ]
