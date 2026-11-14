@@ -4,12 +4,25 @@
 
 ### Added
 
-- show a failing suite's last lines
-- honour gitflow.branch.develop as the base branch
+- `git config gitflow.branch.develop <name>` names the integration branch, as in
+  git-flow. `/start-feature`, `/finish-feature`, the release commands and the
+  worktree rename hook all honour it, so a repo with no `develop` can set it to
+  `main`.
+- A failing test suite now prints its last 15 lines, prefixed with the suite's
+  name, so a CI log shows why it failed.
+
+### Changed
+
+- Install from the InterfaceLayer marketplace:
+  `/plugin marketplace add jagp/interface-layer`, then
+  `/plugin install cc-gitflow-regulator@interface-layer`. This repo no longer
+  carries its own `.claude-plugin/marketplace.json`.
 
 ### Fixed
 
-- count gitflow.branch.* names as long-lived
+- `/finish-feature` deletes a feature branch once its work is in the branch
+  `gitflow.branch.develop` or `gitflow.branch.master` names. Before, it treated
+  such a base as a temporary release branch and kept the feature forever.
 
 ## 1.0.0 — 2026-11-12
 
