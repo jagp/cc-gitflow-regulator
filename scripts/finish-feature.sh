@@ -189,10 +189,9 @@ fi
 [ "$branch" = "$base" ] && fail "refusing: $branch is the base branch"
 
 # Long-lived branches: the ones a feature's work may rest in for good, so its
-# branch can be deleted (phase 5 below, and the plan preview). The usual names,
-# the override, and git-flow's per-repo names (gitflow.branch.develop/.master),
-# so a repo whose integration branch is "trunk" cleans up like one using develop.
-long_lived_branches="develop dev main master $BASE_OVERRIDE $(G config --get gitflow.branch.develop 2>/dev/null) $(G config --get gitflow.branch.master 2>/dev/null)"
+# branch can be deleted (phase 5 below, and the plan preview). See common.sh
+# long_lived_branches for the list.
+long_lived_branches="$(long_lived_branches)"
 
 # --- adopt an origin-only branch (finish) / pick the computation ref ---------
 # plan stays read-only: it computes against the remote-tracking ref and only
