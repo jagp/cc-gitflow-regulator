@@ -31,6 +31,16 @@ opened; git remote remove origin
 out="$(finr release finish 2>&1)"
 check "no origin: lands locally and says nothing was pushed" 'echo "$out" | grep -q exit=0 && echo "$out" | grep -q "nothing pushed — no origin remote"'
 
+# --- finished elsewhere (issue #9) -------------------------------------------------------------
+# Automation (or another clone) landed, tagged and pushed v0.4.0; this clone
+# still has release/0.4.0 open. finish must not land it a second time.
+opened; develop_before="$(git rev-parse develop)"; main_before="$(git rev-parse main)"
+git tag v0.4.0 main && git push -q origin v0.4.0 && git tag -d v0.4.0 >/dev/null
+out="$(finr release finish 2>&1)"
+check "tag already on origin: finish stops, says finished elsewhere, changes nothing"   'echo "$out" | grep -q exit=0 && echo "$out" | grep -q "v0.4.0 is already on origin" && [ "$(git rev-parse develop)" = "$develop_before" ] && [ "$(git rev-parse main)" = "$main_before" ] && git show-ref -q --verify refs/heads/release/0.4.0'
+out="$(finr release plan 2>&1)"
+check "plan says the same" 'echo "$out" | grep -q "finished elsewhere"'
+
 # --- refusals --------------------------------------------------------------------------------
 opened; echo dirty >> CHANGELOG.md
 check "dirty tree refused" 'finr release finish 2>&1 | grep -q exit=2'
