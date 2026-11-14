@@ -37,6 +37,9 @@ out="$(lib run_tests . 2>&1)"; code=$?
 check "all suites passing passes" '[ "$code" = 0 ] && echo "$out" | grep -q "tests: passed"'
 
 fresh
+out="$(lib detect_tests .)"
+check "none found names the gitflow.testCommand override" \
+  'echo "$out" | grep -q "^test: none found" && echo "$out" | grep -qF "git config gitflow.testCommand"'
 out="$(lib run_tests . 2>&1)"; code=$?
 check "no suite found warns and passes" '[ "$code" = 0 ] && echo "$out" | grep -q "warn: no tests ran"'
 
