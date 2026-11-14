@@ -81,6 +81,38 @@ out="$(session "$PWD")"
 out="$(session "$PWD")"
 check "nothing to do: the session hook prints nothing" '[ "$out" = exit=0 ]'
 
+# A branch name git allows but JSON must escape: the message stays valid JSON.
+# Windows can't hold the name (refs are files; " is not a legal file name
+# character there), so the case runs where it can: Linux CI.
+if git branch 'feature/say"hi' develop 2>/dev/null; then
+  git switch -q 'feature/say"hi' && commit "feat: quote" && git push -q origin 'feature/say"hi' && git switch -q develop
+  merge_on_origin merge develop 'feature/say"hi'
+  out="$(session "$PWD")"
+  check "a quote in a branch name: still one valid JSON message" \
+    'gone "feature/say\"hi" && printf "%s" "${out%exit=0}" | python3 -c "import json,sys; json.loads(sys.stdin.read())"'
+else
+  echo "SKIP  a quote in a branch name (this platform can't create one)"
+fi
+
+# gitflow.branch.develop names the integration branch: it is protected, and
+# origin's copy of it counts as holding merged work.
+git config gitflow.branch.develop trunk
+git switch -q -c trunk develop && git push -q origin trunk
+git switch -q -c feature/t trunk && commit "feat: t" && git switch -q trunk && merge_no_ff feature/t && git push -q origin trunk
+git switch -q develop
+out="$(prune run 2>&1)"
+check "gitflow.branch.develop=trunk: merged into origin/trunk is deleted, trunk kept" \
+  'gone feature/t && kept trunk && echo "$out" | grep -q "deleted feature/t (its work is in origin/trunk)"'
+git config --unset gitflow.branch.develop
+
+# An unreachable origin (offline, moved repo): the fetch fails, the hook still
+# finishes quietly with exit 0 instead of breaking the session start.
+real_origin="$(git remote get-url origin)"
+git remote set-url origin "$SCRATCH/nowhere.git"
+out="$(session "$PWD")"
+check "an unreachable origin: the session hook still exits 0" 'echo "$out" | grep -q exit=0'
+git remote set-url origin "$real_origin"
+
 mkdir -p "$SCRATCH/not-a-repo"
 out="$(session "$SCRATCH/not-a-repo")"
 check "outside a git repo: silent, exit 0" '[ "$out" = exit=0 ]'
