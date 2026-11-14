@@ -4,12 +4,21 @@
 
 ### Added
 
-- prune merged branches at session start
-- prune-merged deletes local branches origin already holds
+- At session start, a new hook fetches origin and deletes local branches whose
+  work an origin long-lived branch (`develop`, `main`, or their
+  `gitflow.branch.*` names) already holds: PRs merged on GitHub, or a release
+  something else finished. It keeps any branch with no commits of its own,
+  anything checked out somewhere (and says so), and anything squash-merged; it
+  never removes a worktree or pushes. Off with `CC_GITFLOW_REGULATOR_PRUNE=0`,
+  or per repo with `git config gitflow.prune false`. Preview it with
+  `bash scripts/prune-merged.sh plan`.
 
 ### Fixed
 
-- stop when the tag is already on origin
+- `/finish-release` and `/finish-hotfix` stop, changing nothing, when the tag is
+  already on origin while the branch is still open here (release automation or
+  another clone finished it). Running finish again used to rebuild the merge
+  back on a stale `develop`.
 
 ## 1.0.1 — 2026-11-14
 
