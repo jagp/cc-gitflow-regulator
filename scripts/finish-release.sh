@@ -24,7 +24,9 @@
 #   publish    after the user's yes: push the tag, create the GitHub Release
 #              page, print rollback commands and the notify list
 #
-# Acts on the single local <type>/<version> branch. Landing is resumable:
+# Acts on the single open <type>/<version> branch: the local one, or origin's
+# when finish deleted the local copy after opening its PR (finish then
+# restores it from origin and carries on). Landing is resumable:
 # every step checks whether it is already done and skips it, so after a
 # conflict the user resolves it and simply runs finish again.
 #
@@ -101,11 +103,12 @@ if [ "$mode" = publish ]; then
 fi
 
 # --- the branch being finished --------------------------------------------------------------
-# Exactly one local <type>/* branch; its name carries the version.
-open_branches="$(G for-each-ref --format='%(refname:short)' "refs/heads/$branch_type/")"
+# Exactly one open <type>/* branch, local or on origin (common.sh
+# open_branches); its name carries the version.
+open_branches="$(open_branches "$branch_type")"
 if [ -z "$open_branches" ]; then
-  # Nothing left to land. If the last finish ended with the tag push
-  # declined, the tag is still local only: offer it again.
+  # Nothing left to land, here or on origin. If the last finish ended with
+  # the tag push declined, the tag is still local only: offer it again.
   last_tag="$(last_release_tag "$production")"
   if [ -n "$last_tag" ] && [ "$has_origin" = 1 ] \
      && ! G ls-remote --exit-code --tags origin "refs/tags/$last_tag" >/dev/null 2>&1; then
@@ -124,7 +127,7 @@ valid_version "$version" || fail "$branch is not named $branch_type/X.Y.Z"
 # Back-merge target: see the header. A hotfix prefers an open release branch.
 merge_back_into="$integration"
 if [ "$branch_type" = hotfix ]; then
-  open_release="$(G for-each-ref --format='%(refname:short)' refs/heads/release/ | head -1)"
+  open_release="$(open_branches release | head -1)"           # may be on origin only (PR open)
   [ -n "$open_release" ] && merge_back_into="$open_release"
 fi
 # Finished elsewhere: the tag is already on origin, yet the branch is still open
@@ -134,9 +137,27 @@ fi
 # integration branch, so stop and say what is left: local cleanup only.
 if [ "$has_origin" = 1 ] && G ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
   echo "ok: $tag is already on origin — $branch was finished elsewhere; nothing to land"
-  echo "next: pull $production and $merge_back_into, then delete the local $branch (the session-start prune deletes it once origin holds its work)"
+  if has_ref "refs/heads/$branch"; then
+    echo "next: pull $production and $merge_back_into, then delete the local $branch (the session-start prune deletes it once origin holds its work)"
+  else
+    echo "next: pull $production and $merge_back_into"
+  fi
   exit 0
 fi
+# On origin only: finish deleted the local copy once its PR opened (step 2a
+# below), and a hotfix may merge back into such a release. plan stays
+# read-only: for the branch being finished it says so and stops (its checks
+# need the branch); a merge-back release it just names as "will do". finish
+# recreates them at origin's tip and the steps below run as if they never left.
+for needed in "$branch" "$merge_back_into"; do
+  has_ref "refs/heads/$needed" && continue
+  if [ "$mode" = plan ]; then
+    [ "$needed" = "$branch" ] || continue
+    echo "plan: $branch is on origin only (deleted here once its PR opened) — finish restores it and carries on"
+    exit 0
+  fi
+  restore_from_origin "$needed" || fail "could not restore $needed from origin"
+done
 # The previous release: the version sweep looks for it, ranges start at it.
 previous_tag="$(last_release_tag "$production")"
 since="${previous_tag:+$previous_tag..}"
@@ -334,8 +355,13 @@ if [ "$landed" = 0 ]; then
   # 2a. production_mode pr: production is merged on GitHub, not here.
   #     - push the branch (on a re-run, that updates the open PR)
   #     - open the PR into production, or reuse the open one
+  #     - delete the local branch: origin and the PR hold it now, and a
+  #       local copy lingers once release automation finishes the release
+  #       on GitHub (issue #9). Only when origin has every commit; the
+  #       checkout moves to the merge-back branch first
   #     - stop: the merge must be a MERGE COMMIT so production contains the
-  #       branch; the next finish fetches it and carries on from step 3
+  #       branch; the next finish restores the branch from origin, fetches
+  #       the merge and carries on from step 3
   if [ "$production_mode" = pr ]; then
     G push -q origin "$branch" 2>/dev/null || fail "could not push $branch to origin"
     case "$branch_type" in release) pr_title="Release $version" ;; *) pr_title="Hotfix $version" ;; esac
@@ -344,6 +370,12 @@ if [ "$landed" = 0 ]; then
 ---
 Opened by \`/finish-$branch_type\`. **Merge this with a merge commit** (not squash or rebase), then run \`/finish-$branch_type\` again: it tags the merge as \`$tag\` and carries on. If something else finishes releases for this repo, it stops once \`$tag\` is on origin." \
       || fail "gh pr create failed — $branch is pushed; open a PR into $production by hand"
+    if [ "$(G rev-parse "$branch")" = "$(G rev-parse -q --verify "refs/remotes/origin/$branch")" ] \
+       && W switch -q "$merge_back_into" 2>/dev/null && G branch -D "$branch" >/dev/null 2>&1; then
+      echo "ok: deleted the local $branch — origin holds it (git switch $branch brings it back to make changes)"
+    else
+      echo "warn: kept the local $branch (it differs from origin's, or switching to $merge_back_into failed)"
+    fi
     echo "next: merge the PR with a merge commit (not squash or rebase), then run finish again to tag $tag and carry on"
     exit 0
   fi
