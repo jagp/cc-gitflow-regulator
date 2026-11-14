@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0 — unreleased
+
+### Added
+
+- prune merged branches at session start
+- prune-merged deletes local branches origin already holds
+
+### Fixed
+
+- stop when the tag is already on origin
+
 ## 1.0.1 — 2026-11-14
 
 ### Added
