@@ -68,6 +68,13 @@ check "changelog entry drafted above the old one" \
 check "the bump is committed" '[ "$(git log -1 --format=%s)" = "chore(release): bump version to 0.4.0" ] && [ -z "$(git status --porcelain --untracked-files=no)" ]'
 check "nothing pushed" '! git ls-remote --exit-code origin refs/heads/release/0.4.0 >/dev/null'
 
+# A repo without marketplace.json (listed in someone else's catalog): the
+# bump covers the manifests that exist and creates none.
+release_repo; git rm -q .claude-plugin/marketplace.json && commit "chore: drop own marketplace"
+out="$(startr release start 2>&1)"
+check "no marketplace.json: plugin.json bumped, none created" \
+  'echo "$out" | grep -q exit=0 && grep -q "\"version\": \"0.4.0\"" .claude-plugin/plugin.json && [ ! -e .claude-plugin/marketplace.json ] && [ -z "$(git status --porcelain --untracked-files=no)" ]'
+
 release_repo
 sed -i 's/0.3.1/0.4.0/' .claude-plugin/plugin.json .claude-plugin/marketplace.json
 printf '# Changelog\n\n## 0.4.0 — unreleased\n\n- written by hand\n' > CHANGELOG.md
