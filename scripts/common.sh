@@ -235,7 +235,9 @@ detect_tests() {
     if [ -d "$dir/tests" ] || [ -d "$dir/test" ]; then
       echo "test: a tests/ or test/ folder exists but no recognized runner — inspect it manually"
     else
-      echo "test: none found"
+      # Point at the override so it's discoverable. Deliberately not in the
+      # "   (from ...)" shape, which run_tests (below) would execute as a runner.
+      echo "test: none found — set one with: git config gitflow.testCommand \"<command>\""
     fi
   fi
   return 0

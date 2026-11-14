@@ -53,7 +53,7 @@ refused; report the reason verbatim and fix nothing.
 
 The script's `test:` lines name the test runner(s) it found.
 
-- If the user passed `--skip-tests`, or the output is `test: none found`, skip
+- If the user passed `--skip-tests`, or the output starts `test: none found`, skip
   this step and say so in the report.
 - Otherwise run the **first** `test:` command from the repo root, before any
   changes are made. Plain shell-script suites (`tests/*.sh`) show up as a
