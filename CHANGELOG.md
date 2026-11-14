@@ -4,7 +4,9 @@
 
 ### Added
 
-- point at gitflow.testCommand when no tests are found
+- When `/start-feature` (or a release check) finds no tests, its `test: none
+  found` line now names the override:
+  `git config gitflow.testCommand "<command>"`.
 
 ## 1.1.0 — 2026-11-14
 
