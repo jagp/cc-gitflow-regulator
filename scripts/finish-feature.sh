@@ -188,6 +188,12 @@ fi
 [ -n "$base" ] || fail "no local base branch (gitflow.branch.develop/develop/dev) — set CC_GITFLOW_REGULATOR_BASE"
 [ "$branch" = "$base" ] && fail "refusing: $branch is the base branch"
 
+# Long-lived branches: the ones a feature's work may rest in for good, so its
+# branch can be deleted (phase 5 below, and the plan preview). The usual names,
+# the override, and git-flow's per-repo names (gitflow.branch.develop/.master),
+# so a repo whose integration branch is "trunk" cleans up like one using develop.
+long_lived_branches="develop dev main master $BASE_OVERRIDE $(G config --get gitflow.branch.develop 2>/dev/null) $(G config --get gitflow.branch.master 2>/dev/null)"
+
 # --- adopt an origin-only branch (finish) / pick the computation ref ---------
 # plan stays read-only: it computes against the remote-tracking ref and only
 # announces the adoption; finish actually creates the local branch.
@@ -384,9 +390,9 @@ if [ "$mode" = "plan" ]; then
   if [ "$keep_branch" = "1" ]; then
     echo "plan: cleanup       keep worktree and $branch (--keep-branch)"
   else
-    case " develop dev main master $BASE_OVERRIDE " in
+    case " $long_lived_branches " in
       *" $base "*) echo "plan: cleanup       remove worktree (if any) + delete $branch (--keep-branch skips this)" ;;
-      *) echo "plan: cleanup       keep worktree and $branch — $base is temporary; deleted on a re-run once $base lands in develop/main" ;;
+      *) echo "plan: cleanup       keep worktree and $branch — $base is temporary; deleted on a re-run once $base lands in a long-lived branch" ;;
     esac
   fi
   exit 0
@@ -607,12 +613,12 @@ branch_tip="$(G rev-parse -q --verify "refs/heads/$branch")"
 branch_deleted=0
 
 # Phase 5: delete worktree + branch (default; --keep-branch skips it).
-# Deletion waits until a LONG-LIVED branch holds the work: develop, dev, main,
-# master, or CC_GITFLOW_REGULATOR_BASE. A release/hotfix base is temporary and
+# Deletion waits until a LONG-LIVED branch holds the work ($long_lived_branches,
+# set where the base is resolved). A release/hotfix base is temporary and
 # gets deleted itself, so a feature merged only into one is kept until that
 # base lands in a long-lived branch.
 long_lived_holder=""
-for candidate in develop dev main master $BASE_OVERRIDE; do
+for candidate in $long_lived_branches; do
   if G show-ref --verify -q "refs/heads/$candidate"      && G merge-base --is-ancestor "$branch" "$candidate" 2>/dev/null; then
     long_lived_holder="$candidate"; break
   fi

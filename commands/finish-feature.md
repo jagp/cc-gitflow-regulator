@@ -53,7 +53,7 @@ before merging because it cannot tell what they are. Show the files, then ask
 By default finish removes the worktree and deletes the local branch once a
 long-lived branch (develop, dev, main, master) holds its work. A feature
 merged into a temporary base (`release/*`, `hotfix/*`) is kept, and the
-output says to re-run `/finish-feature` once that base lands in develop/main. Pass `--keep-branch` only when the user asked to keep it (in the
+output says to re-run `/finish-feature` once that base lands in a long-lived branch (develop, main, or the names set in `gitflow.branch.develop` / `gitflow.branch.master`). Pass `--keep-branch` only when the user asked to keep it (in the
 invocation or the immediately preceding conversation). Never add it on your
 own judgment.
 
