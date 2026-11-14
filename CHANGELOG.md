@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.1 — unreleased
+
+### Added
+
+- show a failing suite's last lines
+- honour gitflow.branch.develop as the base branch
+
+### Fixed
+
+- count gitflow.branch.* names as long-lived
+
 ## 1.0.0 — 2026-11-12
 
 First release intended for distribution.
