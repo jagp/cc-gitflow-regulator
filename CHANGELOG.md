@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 — unreleased
+
+### Added
+
+- point at gitflow.testCommand when no tests are found
+
 ## 1.1.0 — 2026-11-14
 
 ### Added
