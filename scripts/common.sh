@@ -19,7 +19,7 @@
 #   refuse_squashed_pr <base> <head>  refuse a PR GitHub squashed/rebased
 #   open_pr <base> <head> <title> <body>  open (or reuse) a PR, print its URL
 #   production_branch          gitflow.branch.master if set, else main, else master
-#   integration_branch         CC_GITFLOW_REGULATOR_BASE if set, else develop, else dev
+#   integration_branch         CC_GITFLOW_REGULATOR_BASE if set, else gitflow.branch.develop, else develop, else dev
 #   require_clean_tree <dir>   refuse when tracked files have uncommitted changes
 #   shell_test_suites <dir>    the *.sh test scripts in tests/ or test/
 #   detect_tests <dir>         one "test: <command>   (from <signal>)" line per runner

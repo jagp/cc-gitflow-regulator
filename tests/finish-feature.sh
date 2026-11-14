@@ -20,6 +20,13 @@ check "temporary base keeps the branch" '! gone feature/r && echo "$out" | grep 
 git switch -q develop && git merge -q --no-ff --no-edit release/x; fin finish feature/r >/dev/null 2>&1
 check "re-run after the base lands deletes it" 'gone feature/r && [ ! -e $W/r ]'
 
+# No recorded base: gitflow.branch.develop picks it (merged locally; origin has no trunk).
+fresh; git branch trunk develop; git config gitflow.branch.develop trunk
+wt g 2>/dev/null; git config --unset gitflow.branch.feature/g.base
+CC_GITFLOW_REGULATOR_FEATURE_MERGE=local fin finish feature/g >/dev/null 2>&1
+check "no recorded base: merges into gitflow.branch.develop" \
+  'gone feature/g && git show trunk:g.txt >/dev/null 2>&1 && ! git show develop:g.txt >/dev/null 2>&1'
+
 # --- worktree leftovers -----------------------------------------------------------
 fresh; wt d 2>/dev/null; echo x > $W/d/new.txt; out="$(fin finish feature/d 2>&1)"
 check "leftovers refuse before the merge" \

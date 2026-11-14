@@ -54,8 +54,8 @@ when the work is done. This plugin fixes all three:
 ## Installation
 
 ```install
-/plugin marketplace add jagp/cc-gitflow-regulator
-/plugin install cc-gitflow-regulator@cc-gitflow-regulator
+/plugin marketplace add jagp/interface-layer
+/plugin install cc-gitflow-regulator@interface-layer
 ```
 
 ## How it works
@@ -220,8 +220,8 @@ and the tag pushed only after you agree.
 It never suggests 1.0.0: leaving 0.x is your call, made by naming the version
 (`/start-release 1.0.0`). It refuses while another release is open or the tag
 exists. Then it creates `release/<version>` from `develop`, bumps the version
-in `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` and
-`package.json`, drafts a `CHANGELOG.md` entry from the commits for you to
+in whichever of `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`
+and `package.json` exist, drafts a `CHANGELOG.md` entry from the commits for you to
 edit, commits that, and runs the tests as a baseline. A hotfix branches from
 `main` instead, always takes the next patch, and may start while a release
 is open.
