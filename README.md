@@ -27,6 +27,9 @@ when the work is done. This plugin fixes all three:
   releases the `feature/*` branch so your git client can check it out or merge
   it immediately. The hooks never push anything; only the commands you run
   talk to origin, as described below.
+- **Merged-branch cleanup** — at session start, local branches whose work
+  origin already holds (merged on GitHub, or a release the pipeline finished)
+  are deleted, so leftovers don't pile up.
 - **Start command** — `/start-feature <name>` performs the Sourcetree-style
   "Start Feature": fast-forward develop from origin, branch `feature/<name>`
   off it, and run the project's test suite as a baseline before you change
@@ -65,10 +68,14 @@ when the work is done. This plugin fixes all three:
 | rename | `PostToolUse` on `EnterWorktree` | Renames `worktree-<name>` → `feature/<name>`. If the branch is _fresh_ (a single `branch: Created from ...` reflog entry), hard-resets it onto the base branch first. Worktrees that already carry commits are never reset. |
 | notify | `Stop` (async)                   | If the worktree is clean and HEAD moved since the last alert, sends the desktop notification. Deduped by commit SHA — one alert per batch of new work, not per turn.                                        |
 | end    | `SessionEnd`                     | Sends any pending alert, then detaches the worktree HEAD (releases the branch) so it is free in your main checkout.                                                                                                         |
+| prune  | `SessionStart` (startup, resume) | Fetches origin, then deletes local branches whose work an origin long-lived branch (`develop`, `main`, or their `gitflow.branch.*` names) already holds. Keeps any branch with no commits of its own, any branch checked out somewhere (and says so), and anything squash-merged. Never removes a worktree.
 
-Everything is scoped to directories under `.claude/worktrees/` — the hooks
-never touch your own branches or checkouts. The script always exits 0; a
-guardrail must never break a session.
+rename, notify and end are scoped to directories under `.claude/worktrees/`.
+prune is the one hook that touches your own branches, and only to delete
+local ones whose work is provably on origin; it never touches a checkout or
+pushes. Turn it off with `CC_GITFLOW_REGULATOR_PRUNE=0`, or per repo with
+`git config gitflow.prune false`. To preview it: `bash scripts/prune-merged.sh plan`.
+Every hook exits 0; a guardrail must never break a session.
 
 ## Configuration
 
@@ -84,6 +91,7 @@ All optional, via environment variables (e.g. the `"env"` block in
 | `CC_GITFLOW_REGULATOR_BACK_MERGE`     | `push`                    | How a finished release or hotfix is merged back into `develop` (or the open `release/*`): same three values; its PR goes from `main`. |
 | `CC_GITFLOW_REGULATOR_CHANGELOG`      | on                        | Release commands draft, require and date a `CHANGELOG.md` entry. `0` turns that off; release notes then come from the commit list.            |
 | `CC_GITFLOW_REGULATOR_GH_RELEASE`     | on                        | Publishing a release also creates its GitHub Release page with `gh`. `0` turns that off.                                                        |
+| `CC_GITFLOW_REGULATOR_PRUNE`          | on                        | The session-start hook deletes local branches whose work origin already holds. `0` turns it off (per repo: `git config gitflow.prune false`). |
 
 ## Starting a branch: `/start-feature`
 
