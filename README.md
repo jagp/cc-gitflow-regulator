@@ -254,8 +254,13 @@ that already happened is skipped.
 taking `pr`, `push` or `local` (see the table above). By default the merge
 into `main` goes through a PR and the merge back into `develop` is done here
 and pushed. A `pr` stage pushes, opens the PR (or finds the open one) and
-stops; merge the PR **with a merge commit**, then run the command again. It
-fetches the merge and carries on: tag, merge back, push, clean up. A squash
+stops. The PR into `main` also deletes the local release branch, because
+origin and the PR now hold it. If release automation finishes the release on
+GitHub, nothing is left behind here. To change the release while its PR is
+open, `git switch release/<version>` brings the branch back. Merge the PR
+**with a merge commit**, then run the command again. It restores the branch
+from origin, fetches the merge and carries on: tag, merge back, push, clean
+up. A squash
 or rebase merge copies the commits instead of merging them, so git can't
 see the branch landed; finish refuses that case rather than tagging a guess.
 A `pr` stage without `gh` (installed and logged in) or an origin remote

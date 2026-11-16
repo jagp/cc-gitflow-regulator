@@ -12,6 +12,8 @@
 #   same_folder <a> <b>        do two paths (C:/x vs /c/x) name one folder?
 #   has_ref <full ref>         does refs/heads/x, refs/tags/x, ... exist?
 #   fast_forward_to_origin <b> move <b> up to origin/<b> when strictly behind
+#   open_branches <type>       the open release/* (or hotfix/*) branches, local or on origin
+#   restore_from_origin <b>    recreate the local <b> at origin's tip
 #   switch_on <ENV> <git.key>  on/off settings: env var first, then git config,
 #                              then on. 0/false/off/no (any case) mean off.
 #   merge_mode <ENV> <key> <default>  pr | push | local for one merge stage
@@ -73,6 +75,33 @@ fast_forward_to_origin() {
   if [ -z "$folder" ]; then G update-ref "refs/heads/$branch" "refs/remotes/origin/$branch" || return 3
   elif same_folder "$folder" "$here"; then W merge -q --ff-only "origin/$branch" || return 3
   else return 2; fi
+}
+
+# open_branches <type>: the <type>/* branches still open (type: release or
+# hotfix), one name per line, nothing when none.
+#   1. local branches, when there are any
+#   2. otherwise origin's, asked LIVE (ls-remote), so:
+#      - a release whose local copy finish deleted once its PR opened still
+#        counts (finish-release.sh, "into production by PR")
+#      - a teammate's pushed branch counts before it is fetched
+#      - a branch deleted on origin since the last fetch does NOT count, so it
+#        is never brought back from a stale origin/* ref
+open_branches() {
+  local found
+  found="$(G for-each-ref --format='%(refname:short)' "refs/heads/$1/")"
+  if [ -z "$found" ] && G remote get-url origin >/dev/null 2>&1; then
+    found="$(G ls-remote --heads origin "refs/heads/$1/*" 2>/dev/null | sed 's|.*refs/heads/||')"
+  fi
+  [ -z "$found" ] || printf '%s\n' "$found"
+}
+
+# restore_from_origin <branch>: recreate a deleted local <branch> at origin's
+# tip. Fetches the one branch first (its origin/* ref may be missing or old),
+# then points the new local branch at it.
+restore_from_origin() {
+  G fetch -q origin "+refs/heads/$1:refs/remotes/origin/$1" 2>/dev/null \
+    && G branch -q "$1" "refs/remotes/origin/$1" \
+    && echo "ok: restored $1 from origin"
 }
 
 # switch_value <ENV> <git.key>: a setting's raw value, lowercased. Where it

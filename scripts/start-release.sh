@@ -89,12 +89,8 @@ branch="$branch_type/$version"
 # --- 2. refusals -----------------------------------------------------------------------------
 require_clean_tree "$here"
 has_origin=0; G remote get-url origin >/dev/null 2>&1 && has_origin=1
-# Open branches: local ones, plus origin's asked live (ls-remote), so one a
-# teammate pushed counts even before it was fetched.
-open_branch="$(G for-each-ref --format='%(refname:short)' "refs/heads/$branch_type/" | head -1)"
-if [ -z "$open_branch" ] && [ "$has_origin" = 1 ]; then
-  open_branch="$(G ls-remote --heads origin "refs/heads/$branch_type/*" 2>/dev/null | head -1 | sed 's|.*refs/heads/||')"
-fi
+# Open branches: local ones, else origin's asked live (common.sh open_branches).
+open_branch="$(open_branches "$branch_type" | head -1)"
 [ -z "$open_branch" ] || fail "$open_branch is still open — finish it first (one $branch_type at a time)"
 if has_ref "refs/tags/v$version" \
    || { [ "$has_origin" = 1 ] && G ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; }; then

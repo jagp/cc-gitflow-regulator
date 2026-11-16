@@ -38,7 +38,11 @@ Exit codes:
   back): a `next:` line means finish stopped at an open PR. Relay the PR URL
   and the `next:` line, stress that the PR must be merged **with a merge
   commit** (not squash or rebase), and stop. Never merge the PR yourself.
-  Once the user has merged it, running `/finish-<type>` again carries on.
+  At the PR into main, finish deletes the local branch (origin holds it) and
+  leaves the checkout on the merge-back branch (`develop`, or for a hotfix the
+  open release). Say so, and that `git switch <type>/<version>`
+  brings it back for changes. Once the user has merged the PR, running
+  `/finish-<type>` again restores the branch from origin and carries on.
   If the tag is already on origin (release automation, or another clone, finished
   it), finish stops and changes nothing: pull `main` and `develop`, and the local
   branch is deleted at the next session start.
