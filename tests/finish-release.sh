@@ -240,6 +240,14 @@ startr hotfix start >/dev/null 2>&1; edit fix.txt fixed "fix: the urgent bug"
 out="$(CC_GITFLOW_REGULATOR_RELEASE_MERGE=push finr hotfix finish 2>&1)"
 check "a hotfix during an open release PR goes into that release on origin, not develop" \
   'echo "$out" | grep -q exit=0 && git fetch -q origin && git merge-base --is-ancestor v0.3.2 origin/release/0.4.0 && ! git merge-base --is-ancestor v0.3.2 develop'
+# The delete moves the checkout to develop first. develop checked out in
+# another worktree is refused up front (finish-release.sh step 1 of the
+# checks), before anything is pushed or deleted: the local branch stays.
+pr_opened; git worktree add -q ../wt-develop develop
+out="$(finr release finish 2>&1)"
+check "into main by PR: develop checked out elsewhere refuses before pushing or deleting" \
+  'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "is checked out at" && git show-ref -q --verify refs/heads/release/0.4.0 && ! git ls-remote --exit-code origin refs/heads/release/0.4.0 >/dev/null'
+git worktree remove --force ../wt-develop
 
 pr_opened; finr release finish >/dev/null 2>&1; merge_on_origin squash main release/0.4.0
 out="$(finr release finish 2>&1)"
