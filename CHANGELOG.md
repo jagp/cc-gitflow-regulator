@@ -4,7 +4,12 @@
 
 ### Added
 
-- delete the local branch once its PR into main is open
+- When `/finish-release` or `/finish-hotfix` opens the PR into main, it
+  deletes the local branch (origin holds it) and leaves you on `develop` (or,
+  for a hotfix, the open release). `git switch release/<version>` brings it
+  back for changes; running finish again after the merge restores it from
+  origin and carries on. `/start-release` still treats a release waiting on
+  its PR as open. Follows up issue #9.
 
 ## 1.2.0 — 2026-11-14
 
