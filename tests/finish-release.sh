@@ -207,18 +207,47 @@ pr_opened; main_before="$(git rev-parse main)"
 out="$(finr release finish 2>&1)"
 check "into main by PR: finish opens a PR into main and stops" \
   'echo "$out" | grep -q exit=0 && grep -q "^gh pr create --base main --head release/0.4.0" "$SCRATCH_LOG" && echo "$out" | grep -q "^next: .*merge commit"'
-check "into main by PR: main untouched, no tag, branch kept and pushed" \
-  '[ "$(git rev-parse main)" = "$main_before" ] && [ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$main_before" ] && ! git show-ref -q --verify refs/tags/v0.4.0 && git show-ref -q --verify refs/heads/release/0.4.0 && [ "$(git ls-remote origin refs/heads/release/0.4.0 | cut -f1)" = "$(git rev-parse release/0.4.0)" ]'
-check "into main by PR: the entry is dated before the PR opens" 'git show release/0.4.0:CHANGELOG.md | grep -q "^## 0.4.0 — $today"'
+check "into main by PR: main untouched, no tag, branch pushed" \
+  '[ "$(git rev-parse main)" = "$main_before" ] && [ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$main_before" ] && ! git show-ref -q --verify refs/tags/v0.4.0 && git ls-remote --exit-code origin refs/heads/release/0.4.0 >/dev/null'
+# Issue #9: origin and the PR hold the branch, so the local copy goes now.
+check "into main by PR: the local branch is deleted once the PR is open, checkout on develop" \
+  '! git show-ref -q --verify refs/heads/release/0.4.0 && [ "$(git branch --show-current)" = develop ] && echo "$out" | grep -q "deleted the local release/0.4.0"'
+check "into main by PR: the entry is dated before the PR opens" 'git show origin/release/0.4.0:CHANGELOG.md | grep -q "^## 0.4.0 — $today"'
+out="$(finr release plan 2>&1)"
+check "into main by PR: plan names the release that is on origin only, and stays read-only" \
+  'echo "$out" | grep -q "release/0.4.0 is on origin only" && ! git show-ref -q --verify refs/heads/release/0.4.0'
+check "into main by PR: start-release still sees the release as open" \
+  'startr release start 2>&1 | grep -q "release/0.4.0 is still open"'
 out="$(finr release finish 2>&1)"
-check "into main by PR: a re-run while the PR is open opens no second PR" \
-  'echo "$out" | grep -q exit=0 && [ "$(grep -c "^gh pr create" "$SCRATCH_LOG")" = 1 ] && echo "$out" | grep -q "already open"'
+check "into main by PR: a re-run while the PR is open restores the branch, opens no second PR, deletes it again" \
+  'echo "$out" | grep -q exit=0 && echo "$out" | grep -q "restored release/0.4.0 from origin" && [ "$(grep -c "^gh pr create" "$SCRATCH_LOG")" = 1 ] && echo "$out" | grep -q "already open" && ! git show-ref -q --verify refs/heads/release/0.4.0'
 merge_on_origin merge main release/0.4.0; merge_commit="$(git ls-remote origin refs/heads/main | cut -f1)"
 out="$(finr release finish 2>&1)"
 check "into main by PR: after the merge, finish tags it, merges back and cleans up" \
   'echo "$out" | grep -q exit=0 && [ "$(git rev-parse "v0.4.0^{commit}")" = "$merge_commit" ] && git merge-base --is-ancestor v0.4.0 develop && ! git show-ref -q --verify refs/heads/release/0.4.0 && echo "$out" | grep -q "^ask: push-tag v0.4.0"'
 check "into main by PR: main is not merged a second time; develop is pushed" \
   '[ "$(git rev-parse main)" = "$merge_commit" ] && [ "$(git ls-remote origin refs/heads/develop | cut -f1)" = "$(git rev-parse develop)" ]'
+# Deleted on origin (release automation finished it) while this clone's
+# origin/release/0.4.0 ref is stale: the stale ref must not bring it back.
+pr_opened; finr release finish >/dev/null 2>&1; git --git-dir=../origin.git branch -q -D release/0.4.0
+out="$(finr release finish 2>&1)"
+check "a release deleted on origin is not restored from a stale origin/* ref" \
+  'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "no release/\* branch to finish" && ! git show-ref -q --verify refs/heads/release/0.4.0'
+# A hotfix while the release's PR is open: the release is on origin only, the
+# fix still goes into it (restored here, then pushed to update its PR).
+pr_opened; commit "feat: in the release"; finr release finish >/dev/null 2>&1
+startr hotfix start >/dev/null 2>&1; edit fix.txt fixed "fix: the urgent bug"
+out="$(CC_GITFLOW_REGULATOR_RELEASE_MERGE=push finr hotfix finish 2>&1)"
+check "a hotfix during an open release PR goes into that release on origin, not develop" \
+  'echo "$out" | grep -q exit=0 && git fetch -q origin && git merge-base --is-ancestor v0.3.2 origin/release/0.4.0 && ! git merge-base --is-ancestor v0.3.2 develop'
+# The delete moves the checkout to develop first. develop checked out in
+# another worktree is refused up front (finish-release.sh step 1 of the
+# checks), before anything is pushed or deleted: the local branch stays.
+pr_opened; git worktree add -q ../wt-develop develop
+out="$(finr release finish 2>&1)"
+check "into main by PR: develop checked out elsewhere refuses before pushing or deleting" \
+  'echo "$out" | grep -q exit=2 && echo "$out" | grep -q "is checked out at" && git show-ref -q --verify refs/heads/release/0.4.0 && ! git ls-remote --exit-code origin refs/heads/release/0.4.0 >/dev/null'
+git worktree remove --force ../wt-develop
 
 pr_opened; finr release finish >/dev/null 2>&1; merge_on_origin squash main release/0.4.0
 out="$(finr release finish 2>&1)"
