@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0 — unreleased
+
+### Added
+
+- delete the local branch once its PR into main is open
+
 ## 1.2.0 — 2026-11-14
 
 ### Added
