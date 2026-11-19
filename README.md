@@ -6,14 +6,48 @@
 
 v1.3.0
 
-Gitflow guardrails for Claude Code — every worktree flows back through the regulator.
+GitFlow guardrails for Claude Code — handling the inevitable conflicts that 
+arise when Claude agents (and subagents) try to work in a repo structured
+around GitFlow conventions.  
 
+If you or your team follow GitFlow, you've undoubtedly come up against the following:
+- Claude recognizes your commit tree is nicely structured ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+- he understands what you mean when you descirbe the purposes of the branching strategty you employ
+- he makes one or two commits/mergees following conventions
+- a few days later, you notice:
+    - merge conflicts
+    - locked branches
+    - stale worktrees
+    - improperly named branches
+    - detached heads
+    - limbs that refuse deletion
+    - improperly applied stashes
+    - subagents and daemons spinning forever in long-forgotten corners 
+
+What's going on here?
+
+Claude Code has one viable Git strategy out of the box: his own way.  
+Which really means: without any enforced structure.
+
+You can write the cleanest, most logical instructions in the world, but inevitably, if you allow his
+judgment to beconme a factor in your commits, key details will get guessed at, fudged, 
+missed - or, worse - committed, and layered over.  When this happens, you may find unravelling a loose thread
+quickly turns into a bundle of grouped issues, with no clear path forward other
+than reverting the mess or rebasing.
+
+Claude's dynamic workflows are the prime offender (but not the only example):
 Claude Code isolates background and parallel work in git worktrees on internal
 `worktree-*` branches. Those branches don't follow gitflow naming, stay checked
 out inside the worktree (so Sourcetree/GitKraken/git can't check them out —
 `fatal: '<branch>' is already used by worktree at ...`), and nothing tells you
-when the work is done. This plugin fixes all three:
+when the work is done. Even after layering in development.md conventions, you keep 
+running into the same leftover stubs, inexplicably unmergeable features, failures from 
+3rd party apps that have worked gracefully for decades.  You're not crazy: for all his many 
+virtues, Claude Code is a slovenly, greedy, uncouth Git user!  He dives deep into the many
+excelelent Git advanced features, but doesn't tasake even the most basic "cleanup" steps 
+once finished.  
 
+This plugin gives Claude the tools he should have had all along, and the hooks to require he use them:
 
 
 - **Gitflow naming** — the moment a worktree is created, its branch is renamed
@@ -39,6 +73,10 @@ when the work is done. This plugin fixes all three:
   "Finish Feature" for you: `--no-ff` merge into the branch's base (PR route
   on conflicts), push the base to origin, remove the worktree and delete the
   local branch, then ask before deleting the branch on origin.
+ - **Hung Sessions** -- cleaning up features is a breeze, even when multiple sub-
+  agents have touched code, each leaving behind a worktree, a session, possibly 
+  a daemon, all of which need to be handled differently and lock uyp a filesystem if
+  brute forced 
 - **Release and hotfix commands** — `/start-release` / `/finish-release` and
   `/start-hotfix` / `/finish-hotfix` cut and land releases: version suggested
   from your commits, manifests bumped, changelog drafted and dated, `--no-ff`
