@@ -11,7 +11,7 @@ arise when Claude agents (and subagents) try to work in a repo structured
 around GitFlow conventions.  
 
 If you or your team follow GitFlow, you've undoubtedly come up against the following:
-- Claude recognizes your commit tree is nicely structured ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+- Claude recognizes your commit tree is nicely structured
 - he understands what you mean when you descirbe the purposes of the branching strategty you employ
 - he makes one or two commits/mergees following conventions
 - a few days later, you notice:
@@ -24,8 +24,7 @@ If you or your team follow GitFlow, you've undoubtedly come up against the follo
     - improperly applied stashes
     - subagents and daemons spinning forever in long-forgotten corners 
 
-What's going on here?
-
+**What's going on here?**
 Claude Code has one viable Git strategy out of the box: his own way.  
 Which really means: without any enforced structure.
 
@@ -48,8 +47,6 @@ excelelent Git advanced features, but doesn't tasake even the most basic "cleanu
 once finished.  
 
 This plugin gives Claude the tools he should have had all along, and the hooks to require he use them:
-
-
 - **Gitflow naming** — the moment a worktree is created, its branch is renamed
   to `feature/<name>`.
 - **Fork from develop** — fresh worktrees are re-pointed to your gitflow base
